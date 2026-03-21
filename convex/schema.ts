@@ -644,6 +644,14 @@ const packageSearchDigest = defineTable({
 })
   .index("by_package", ["packageId"])
   .index("by_active_updated", ["softDeletedAt", "updatedAt"])
+  .index("by_active_channel_updated", ["softDeletedAt", "channel", "updatedAt"])
+  .index("by_active_official_updated", ["softDeletedAt", "isOfficial", "updatedAt"])
+  .index("by_active_channel_official_updated", [
+    "softDeletedAt",
+    "channel",
+    "isOfficial",
+    "updatedAt",
+  ])
   .index("by_active_family_updated", ["softDeletedAt", "family", "updatedAt"])
   .index("by_active_family_channel_updated", ["softDeletedAt", "family", "channel", "updatedAt"])
   .index("by_active_family_official_updated", [

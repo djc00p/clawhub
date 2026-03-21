@@ -105,8 +105,17 @@ type PublicPackageDoc = {
   updatedAt: number;
 };
 
-function toPublicPackage(pkg: Doc<"packages"> | null | undefined): PublicPackageDoc | null {
+function toPublicPackage(
+  pkg: Doc<"packages"> | null | undefined,
+  latestRelease?: Pick<Doc<"packageReleases">, "version" | "softDeletedAt"> | null,
+): PublicPackageDoc | null {
   if (!pkg || pkg.softDeletedAt) return null;
+  const latestVersion =
+    latestRelease === undefined
+      ? pkg.latestVersionSummary?.version ?? null
+      : latestRelease && !latestRelease.softDeletedAt
+        ? latestRelease.version
+        : null;
   return {
     _id: pkg._id,
     name: pkg.name,
@@ -118,7 +127,7 @@ function toPublicPackage(pkg: Doc<"packages"> | null | undefined): PublicPackage
     summary: pkg.summary,
     tags: pkg.tags,
     latestReleaseId: pkg.latestReleaseId,
-    latestVersion: pkg.latestVersionSummary?.version ?? null,
+    latestVersion,
     compatibility: pkg.compatibility,
     capabilities: pkg.capabilities,
     verification: pkg.verification,
@@ -236,6 +245,21 @@ function buildPackageDigestQuery(
       q.eq("softDeletedAt", undefined).eq("family", family),
     );
   }
+  if (channel && typeof isOfficial === "boolean") {
+    return ctx.db.query("packageSearchDigest").withIndex("by_active_channel_official_updated", (q) =>
+      q.eq("softDeletedAt", undefined).eq("channel", channel).eq("isOfficial", isOfficial),
+    );
+  }
+  if (channel) {
+    return ctx.db.query("packageSearchDigest").withIndex("by_active_channel_updated", (q) =>
+      q.eq("softDeletedAt", undefined).eq("channel", channel),
+    );
+  }
+  if (typeof isOfficial === "boolean") {
+    return ctx.db.query("packageSearchDigest").withIndex("by_active_official_updated", (q) =>
+      q.eq("softDeletedAt", undefined).eq("isOfficial", isOfficial),
+    );
+  }
   return ctx.db.query("packageSearchDigest").withIndex("by_active_updated", (q) =>
     q.eq("softDeletedAt", undefined),
   );
@@ -257,11 +281,11 @@ export const getByName = query({
     const normalizedName = normalizePackageName(args.name);
     const pkg = await getPackageByNormalizedName(ctx, normalizedName);
     if (pkg?.channel === "private" && pkg.ownerUserId !== args.viewerUserId) return null;
-    const publicPackage = toPublicPackage(pkg);
-    if (!publicPackage || !pkg) return null;
-
-    const owner = toPublicUser(await ctx.db.get(pkg.ownerUserId));
+    if (!pkg || pkg.softDeletedAt) return null;
     const latestRelease = pkg.latestReleaseId ? await ctx.db.get(pkg.latestReleaseId) : null;
+    const publicPackage = toPublicPackage(pkg, latestRelease);
+    if (!publicPackage) return null;
+    const owner = toPublicUser(await ctx.db.get(pkg.ownerUserId));
     return {
       package: publicPackage,
       latestRelease: latestRelease && !latestRelease.softDeletedAt ? latestRelease : null,

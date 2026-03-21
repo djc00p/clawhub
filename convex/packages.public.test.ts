@@ -17,7 +17,10 @@ type WrappedHandler<TArgs, TResult> = {
 const getByNameHandler = (
   getByName as unknown as WrappedHandler<
     { name: string; viewerUserId?: string },
-    { package: { name: string } } | null
+    {
+      package: { name: string; latestVersion: string | null };
+      latestRelease: { version: string } | null;
+    } | null
   >
 )._handler;
 const getVersionByNameHandler = (
@@ -162,16 +165,21 @@ function makeDigestCtx(options: {
   pages?: Array<{ page: Array<Record<string, unknown>>; isDone: boolean; continueCursor: string }>;
 }) {
   const paginate = vi.fn();
+  const indexNames: string[] = [];
   for (const page of options.pages ?? []) {
     paginate.mockResolvedValueOnce(page);
   }
-  const withIndex = vi.fn(() => ({
-    order: vi.fn(() => ({
-      paginate,
-    })),
-  }));
+  const withIndex = vi.fn((indexName: string) => {
+    indexNames.push(indexName);
+    return {
+      order: vi.fn(() => ({
+        paginate,
+      })),
+    };
+  });
 
   return {
+    indexNames,
     paginate,
     ctx: {
       db: {
@@ -492,6 +500,75 @@ describe("packages public queries", () => {
     expect(result.map((entry) => entry.package.name)).toContain("demo-plugin");
   });
 
+  it("uses the official index for no-family official search filters", async () => {
+    const { ctx, indexNames } = makeDigestCtx({
+      pages: [
+        {
+          page: [makeDigest("official-demo", { isOfficial: true })],
+          isDone: true,
+          continueCursor: "",
+        },
+      ],
+    });
+
+    const result = await searchPublicHandler(ctx, {
+      query: "official",
+      isOfficial: true,
+      limit: 10,
+    });
+
+    expect(result.map((entry) => entry.package.name)).toEqual(["official-demo"]);
+    expect(indexNames).toEqual(["by_active_official_updated"]);
+  });
+
+  it("uses the channel index for no-family channel search filters", async () => {
+    const { ctx, indexNames } = makeDigestCtx({
+      pages: [
+        {
+          page: [makeDigest("community-demo", { channel: "community" })],
+          isDone: true,
+          continueCursor: "",
+        },
+      ],
+    });
+
+    const result = await searchPublicHandler(ctx, {
+      query: "community",
+      channel: "community",
+      limit: 10,
+    });
+
+    expect(result.map((entry) => entry.package.name)).toEqual(["community-demo"]);
+    expect(indexNames).toEqual(["by_active_channel_updated"]);
+  });
+
+  it("uses the combined channel and official index when both filters are set", async () => {
+    const { ctx, indexNames } = makeDigestCtx({
+      pages: [
+        {
+          page: [
+            makeDigest("official-community-demo", {
+              channel: "community",
+              isOfficial: true,
+            }),
+          ],
+          isDone: true,
+          continueCursor: "",
+        },
+      ],
+    });
+
+    const result = await searchPublicHandler(ctx, {
+      query: "official-community",
+      channel: "community",
+      isOfficial: true,
+      limit: 10,
+    });
+
+    expect(result.map((entry) => entry.package.name)).toEqual(["official-community-demo"]);
+    expect(indexNames).toEqual(["by_active_channel_official_updated"]);
+  });
+
   it("blocks anonymous reads of private packages", async () => {
     const { ctx } = makePackageCtx({
       pkg: makePackageDoc({ channel: "private" }),
@@ -532,6 +609,19 @@ describe("packages public queries", () => {
 
     expect(detail?.package.name).toBe("demo-plugin");
     expect(version?.version.version).toBe("1.0.0");
+  });
+
+  it("does not expose a soft-deleted latest release as latestVersion", async () => {
+    const { ctx } = makePackageCtx({
+      latestRelease: makeReleaseDoc({ softDeletedAt: 10 }),
+    });
+
+    const result = await getByNameHandler(ctx, {
+      name: "demo-plugin",
+    });
+
+    expect(result?.package.latestVersion).toBeNull();
+    expect(result?.latestRelease).toBeNull();
   });
 
   it("hides soft-deleted releases from public version lists", async () => {
