@@ -1482,13 +1482,65 @@ describe("packages public queries", () => {
     })) as Record<string, unknown>;
 
     expect(runMutation).toHaveBeenCalled();
-    expect(result.verification).toEqual(expect.objectContaining({ scanStatus: "suspicious" }));
+    expect(result.verification).toEqual(expect.objectContaining({ scanStatus: "pending" }));
     expect(result.staticScan).toEqual(
       expect.objectContaining({
         status: "suspicious",
         reasonCodes: expect.arrayContaining(["suspicious.dangerous_exec"]),
       }),
     );
+  });
+
+  it("hides pending-scan packages from public reads", async () => {
+    vi.mocked(getAuthUserId).mockResolvedValue(null);
+    const ctx = {
+      db: {
+        get: vi.fn(async (id: string) => {
+          if (id === "packageReleases:demo-1") return makeReleaseDoc({ version: "1.0.0" });
+          if (id === "users:owner") return { _id: "users:owner", handle: "owner" };
+          return null;
+        }),
+        query: vi.fn((table: string) => {
+          if (table !== "packages") throw new Error(`Unexpected table ${table}`);
+          return {
+            withIndex: vi.fn(() => ({
+              unique: vi.fn().mockResolvedValue(makePackageDoc({ scanStatus: "pending" })),
+            })),
+          };
+        }),
+      },
+    };
+
+    const result = await getByNameHandler(ctx as never, { name: "demo-plugin" });
+    expect(result).toBeNull();
+  });
+
+  it("keeps pending-scan packages visible to the owner", async () => {
+    vi.mocked(getAuthUserId).mockResolvedValue("users:owner" as never);
+    const result = await getByNameHandler(
+      {
+        db: {
+          get: vi.fn(async (id: string) => {
+            if (id === "packageReleases:demo-1") return makeReleaseDoc({ version: "1.0.0" });
+            if (id === "users:owner") return { _id: "users:owner", handle: "owner" };
+            return null;
+          }),
+          query: vi.fn((table: string) => {
+            if (table !== "packages") throw new Error(`Unexpected table ${table}`);
+            return {
+              withIndex: vi.fn(() => ({
+                unique: vi.fn().mockResolvedValue(
+                  makePackageDoc({ ownerUserId: "users:owner", scanStatus: "pending" }),
+                ),
+              })),
+            };
+          }),
+        },
+      } as never,
+      { name: "demo-plugin" },
+    );
+
+    expect(result?.package?.name).toBe("demo-plugin");
   });
 
   it("requires auth inside the public publish action", async () => {

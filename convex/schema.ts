@@ -159,6 +159,16 @@ const packageVerificationValidator = v.optional(
   }),
 );
 
+const packageScanStatusValidator = v.optional(
+  v.union(
+    v.literal("clean"),
+    v.literal("suspicious"),
+    v.literal("malicious"),
+    v.literal("pending"),
+    v.literal("not-run"),
+  ),
+);
+
 const packageFilesValidator = v.array(
   v.object({
     path: v.string(),
@@ -588,6 +598,7 @@ const packages = defineTable({
   compatibility: packageCompatibilityValidator,
   capabilities: packageCapabilitiesValidator,
   verification: packageVerificationValidator,
+  scanStatus: packageScanStatusValidator,
   stats: packageStatsValidator,
   softDeletedAt: v.optional(v.number()),
   createdAt: v.number(),
@@ -692,6 +703,7 @@ const packageSearchDigest = defineTable({
   capabilityTags: v.optional(v.array(v.string())),
   executesCode: v.optional(v.boolean()),
   verificationTier: v.optional(packageVerificationTierValidator),
+  scanStatus: packageScanStatusValidator,
   softDeletedAt: v.optional(v.number()),
   createdAt: v.number(),
   updatedAt: v.number(),
@@ -773,6 +785,7 @@ const packageCapabilitySearchDigest = defineTable({
   capabilityTag: v.string(),
   executesCode: v.optional(v.boolean()),
   verificationTier: v.optional(packageVerificationTierValidator),
+  scanStatus: packageScanStatusValidator,
   softDeletedAt: v.optional(v.number()),
   createdAt: v.number(),
   updatedAt: v.number(),

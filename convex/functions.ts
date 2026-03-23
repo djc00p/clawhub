@@ -92,6 +92,7 @@ async function getPreferredFallbackPackageRelease(
         compatibility: release.compatibility,
         capabilities: release.capabilities,
         verification: release.verification,
+        scanStatus: release.verification?.scanStatus,
         distTags: release.distTags,
       };
       if (!best || compareFallbackReleases(family, candidate, best) > 0) best = candidate;
@@ -197,6 +198,7 @@ export async function repointPackageLatestRelease(
     patch.compatibility = nextLatest?.compatibility;
     patch.capabilities = nextLatest?.capabilities;
     patch.verification = nextLatest?.verification;
+    patch.scanStatus = nextLatest?.scanStatus;
   }
   await ctx.db.patch(pkg._id, patch);
   await syncPackageSearchDigest(ctx, { ...pkg, ...patch });

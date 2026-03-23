@@ -94,6 +94,7 @@ type PackageDigestLike = Pick<
   | "capabilityTags"
   | "executesCode"
   | "verificationTier"
+  | "scanStatus"
   | "softDeletedAt"
 > & {
   capabilityTag?: string;
@@ -137,9 +138,14 @@ type PublicPackageDoc = {
   compatibility?: Doc<"packages">["compatibility"];
   capabilities?: Doc<"packages">["capabilities"];
   verification?: Doc<"packages">["verification"];
+  scanStatus?: Doc<"packages">["scanStatus"];
   createdAt: number;
   updatedAt: number;
 };
+
+function isPackageBlockedFromPublic(scanStatus: Doc<"packages">["scanStatus"]) {
+  return scanStatus === "pending" || scanStatus === "malicious";
+}
 
 function toPublicPackage(
   pkg: Doc<"packages"> | null | undefined,
@@ -167,6 +173,7 @@ function toPublicPackage(
     compatibility: pkg.compatibility,
     capabilities: pkg.capabilities,
     verification: pkg.verification,
+    scanStatus: pkg.scanStatus,
     createdAt: pkg.createdAt,
     updatedAt: pkg.updatedAt,
   };
@@ -501,6 +508,7 @@ async function getReadablePackageByName(
   const pkg = await getPackageByNormalizedName(ctx, normalizedName);
   if (!pkg || pkg.softDeletedAt) return null;
   if (pkg.channel === "private" && pkg.ownerUserId !== viewerUserId) return null;
+  if (isPackageBlockedFromPublic(pkg.scanStatus) && pkg.ownerUserId !== viewerUserId) return null;
   return pkg;
 }
 
@@ -676,7 +684,8 @@ async function listPackagePageImpl(
   }
   const viewerUserId = args.viewerUserId;
   const canViewPackage = (digest: PackageDigestLike) =>
-    digest.channel !== "private" || digest.ownerUserId === viewerUserId;
+    (digest.channel !== "private" || digest.ownerUserId === viewerUserId) &&
+    (!isPackageBlockedFromPublic(digest.scanStatus) || digest.ownerUserId === viewerUserId);
   const targetCount = args.paginationOpts.numItems;
   const collected: PublicPackageListItem[] = [];
   const decodedCursor = decodePublicPageCursor(args.paginationOpts.cursor);
@@ -814,7 +823,8 @@ async function searchPackagesImpl(
   const targetCount = Math.max(1, Math.min(args.limit ?? 20, 100));
   const viewerUserId = args.viewerUserId;
   const canViewPackage = (digest: PackageDigestLike) =>
-    digest.channel !== "private" || digest.ownerUserId === viewerUserId;
+    (digest.channel !== "private" || digest.ownerUserId === viewerUserId) &&
+    (!isPackageBlockedFromPublic(digest.scanStatus) || digest.ownerUserId === viewerUserId);
   const builder = args.capabilityTag
     ? buildPackageCapabilityDigestQuery(ctx, {
         capabilityTag: args.capabilityTag,
@@ -1072,10 +1082,11 @@ async function publishPackageImpl(
     files,
   });
   const verificationSource = codeArtifacts?.verification ?? bundleArtifacts?.verification;
+  const initialScanStatus = staticScan.status === "malicious" ? "malicious" : "pending";
   const verification = verificationSource
     ? {
         ...verificationSource,
-        scanStatus: staticScan.status,
+        scanStatus: initialScanStatus,
       }
     : undefined;
   const integritySha256 = await hashSkillFiles(
@@ -1243,6 +1254,7 @@ export const insertReleaseInternal = internalMutation({
         compatibility: args.compatibility,
         capabilities: args.capabilities,
         verification: args.verification,
+        scanStatus: args.verification?.scanStatus,
         stats: { downloads: 0, installs: 0, stars: 0, versions: 0 },
         createdAt: now,
         updatedAt: now,
@@ -1328,6 +1340,7 @@ export const insertReleaseInternal = internalMutation({
       compatibility: shouldPromoteLatest ? args.compatibility : pkg.compatibility,
       capabilities: shouldPromoteLatest ? args.capabilities : pkg.capabilities,
       verification: shouldPromoteLatest ? args.verification : pkg.verification,
+      scanStatus: shouldPromoteLatest ? args.verification?.scanStatus : pkg.scanStatus,
       stats: { ...pkg.stats, versions: (pkg.stats?.versions ?? 0) + 1 },
       updatedAt: now,
     });
@@ -1366,6 +1379,7 @@ async function syncLatestPackageVerification(
 
   await ctx.db.patch(pkg._id, {
     verification: nextVerification,
+    scanStatus,
     latestVersionSummary: pkg.latestVersionSummary
       ? {
           ...pkg.latestVersionSummary,
