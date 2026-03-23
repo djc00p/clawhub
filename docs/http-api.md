@@ -280,8 +280,8 @@ Notes:
 - Skill entries stay backed by the skill registry and can still be published only through `POST /api/v1/skills`.
 - `POST /api/v1/packages` is still only for code-plugin and bundle-plugin releases.
 - Anonymous callers only see public package channels.
-- Authenticated callers can see their own private packages in list/search results.
-- `channel=private` only returns packages owned by the authenticated caller.
+- Authenticated callers can see private packages for publishers they belong to in list/search results.
+- `channel=private` only returns packages the authenticated caller can read.
 
 ### `GET /api/v1/packages/search`
 
@@ -300,8 +300,8 @@ Query params:
 Notes:
 
 - Anonymous callers only see public package channels.
-- Authenticated callers can search their own private packages.
-- `channel=private` only returns packages owned by the authenticated caller.
+- Authenticated callers can search private packages for publishers they belong to.
+- `channel=private` only returns packages the authenticated caller can read.
 
 ### `GET /api/v1/packages/{name}`
 
@@ -310,7 +310,7 @@ Returns package detail metadata.
 Notes:
 
 - Skills can also resolve through this route in the unified catalog.
-- Private packages return `404` unless the caller is the owner.
+- Private packages return `404` unless the caller can read the owning publisher.
 
 ### `GET /api/v1/packages/{name}/versions`
 
@@ -323,15 +323,16 @@ Query params:
 
 Notes:
 
-- Private packages return `404` unless the caller is the owner.
+- Private packages return `404` unless the caller can read the owning publisher.
 
 ### `GET /api/v1/packages/{name}/versions/{version}`
 
-Returns one package version, including file metadata, compatibility, capabilities, and verification.
+Returns one package version, including file metadata, compatibility, capabilities, verification, and scan data.
 
 Notes:
 
-- Private packages return `404` unless the caller is the owner.
+- `version.sha256hash`, `version.vtAnalysis`, `version.llmAnalysis`, and `version.staticScan` are included when scan data exists.
+- Private packages return `404` unless the caller can read the owning publisher.
 
 ### `GET /api/v1/packages/{name}/file`
 
@@ -349,7 +350,7 @@ Notes:
 - Uses the read rate bucket, not the download bucket.
 - Binary files return `415`.
 - File size limit: 200KB.
-- Private packages return `404` unless the caller is the owner.
+- Private packages return `404` unless the caller can read the owning publisher.
 
 ### `GET /api/v1/packages/{name}/download`
 

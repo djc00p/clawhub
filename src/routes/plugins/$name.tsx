@@ -1,6 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { SecurityScanResults } from "../../components/SkillSecurityScanResults";
 import {
   fetchPackageDetail,
   fetchPackageReadme,
@@ -158,6 +159,14 @@ function PluginDetailRoute() {
                 <code>{JSON.stringify(latestRelease.capabilities ?? pkg.capabilities ?? {}, null, 2)}</code>
               </pre>
             </details>
+          ) : null}
+          {latestRelease ? (
+            <SecurityScanResults
+              sha256hash={latestRelease.sha256hash ?? undefined}
+              vtAnalysis={latestRelease.vtAnalysis ?? undefined}
+              llmAnalysis={latestRelease.llmAnalysis ?? undefined}
+              staticFindings={latestRelease.staticScan?.findings ?? []}
+            />
           ) : null}
           <details className="bundle-details" open>
             <summary>Verification</summary>

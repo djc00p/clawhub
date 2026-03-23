@@ -2,34 +2,17 @@
 
 import { render, screen } from "@testing-library/react";
 import type { ComponentType } from "react";
+import type { PackageDetailResponse, PackageVersionDetail } from "../lib/packageApi";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-let paramsMock = { name: "demo-plugin" };
-type LoaderDataMock = {
-  detail: {
-    package:
-      | {
-          name: string;
-          displayName: string;
-          family: "code-plugin";
-          channel: "community";
-          isOfficial: boolean;
-          summary: string;
-          latestVersion: string | null;
-          createdAt: number;
-          updatedAt: number;
-          tags: Record<string, string>;
-          compatibility: null;
-          capabilities: { executesCode: boolean; capabilityTags: string[] };
-          verification: null;
-        }
-      | null;
-    owner: null;
-  };
-  version: null;
+type PluginDetailLoaderData = {
+  detail: PackageDetailResponse;
+  version: PackageVersionDetail | null;
   readme: string | null;
 };
-let loaderDataMock: LoaderDataMock = {
+
+let paramsMock = { name: "demo-plugin" };
+let loaderDataMock: PluginDetailLoaderData = {
   detail: {
     package: {
       name: "demo-plugin",
@@ -118,5 +101,57 @@ describe("plugin detail route", () => {
 
     expect(screen.getByText("No latest tag")).toBeTruthy();
     expect(screen.queryByRole("link", { name: "Download zip" })).toBeNull();
+  });
+
+  it("renders package security scan results when scan data is present", async () => {
+    loaderDataMock = {
+      detail: loaderDataMock.detail,
+      version: {
+        package: {
+          name: "demo-plugin",
+          displayName: "Demo Plugin",
+          family: "code-plugin",
+        },
+        version: {
+          version: "1.0.0",
+          createdAt: 1,
+          changelog: "Initial release",
+          distTags: ["latest"],
+          files: [],
+          compatibility: null,
+          capabilities: null,
+          verification: { tier: "source-linked", scope: "artifact-only", scanStatus: "clean" },
+          sha256hash: "a".repeat(64),
+          vtAnalysis: {
+            status: "clean",
+            checkedAt: 1,
+          },
+          llmAnalysis: {
+            status: "clean",
+            verdict: "clean",
+            summary: "Looks safe.",
+            checkedAt: 1,
+          },
+          staticScan: {
+            status: "clean",
+            reasonCodes: [],
+            findings: [],
+            summary: "No issues",
+            engineVersion: "1",
+            checkedAt: 1,
+          },
+        },
+      },
+      readme: null,
+    };
+
+    const route = await loadRoute();
+    const Component = route.__config.component as ComponentType;
+
+    render(<Component />);
+
+    expect(screen.getByText("Security Scan")).toBeTruthy();
+    expect(screen.getAllByText("VirusTotal").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("OpenClaw").length).toBeGreaterThan(0);
   });
 });

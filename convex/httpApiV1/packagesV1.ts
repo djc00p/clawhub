@@ -970,6 +970,10 @@ export async function packagesGetRouterV1Handler(ctx: ActionCtx, request: Reques
         compatibility: result.version.compatibility ?? null,
         capabilities: result.version.capabilities ?? null,
         verification: result.version.verification ?? null,
+        sha256hash: result.version.sha256hash ?? null,
+        vtAnalysis: result.version.vtAnalysis ?? null,
+        llmAnalysis: result.version.llmAnalysis ?? null,
+        staticScan: result.version.staticScan ?? null,
       },
     }, 200, rate.headers);
   }

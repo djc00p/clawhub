@@ -68,6 +68,45 @@ export type PackageVersionDetail = {
     compatibility?: PackageCompatibility | null;
     capabilities?: PackageCapabilitySummary | null;
     verification?: PackageVerificationSummary | null;
+    sha256hash?: string | null;
+    vtAnalysis?: {
+      status: string;
+      verdict?: string;
+      analysis?: string;
+      source?: string;
+      checkedAt: number;
+    } | null;
+    llmAnalysis?: {
+      status: string;
+      verdict?: string;
+      confidence?: string;
+      summary?: string;
+      dimensions?: Array<{
+        name: string;
+        label: string;
+        rating: string;
+        detail: string;
+      }>;
+      guidance?: string;
+      findings?: string;
+      model?: string;
+      checkedAt: number;
+    } | null;
+    staticScan?: {
+      status: string;
+      reasonCodes: string[];
+      findings: Array<{
+        code: string;
+        severity: string;
+        file: string;
+        line: number;
+        message: string;
+        evidence: string;
+      }>;
+      summary: string;
+      engineVersion: string;
+      checkedAt: number;
+    } | null;
   } | null;
 };
 

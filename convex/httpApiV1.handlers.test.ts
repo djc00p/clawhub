@@ -2601,6 +2601,112 @@ describe("httpApiV1 handlers", () => {
     );
   });
 
+  it("packages version detail returns security scan fields for plugins", async () => {
+    const runQuery = vi.fn(async (_query: unknown, args: Record<string, unknown>) => {
+      if ("name" in args && !("version" in args)) {
+        return {
+          package: {
+            _id: "packages:demo-plugin",
+            name: "demo-plugin",
+            displayName: "Demo Plugin",
+            family: "code-plugin",
+            tags: { latest: "packageReleases:1" },
+            latestReleaseId: "packageReleases:1",
+            channel: "community",
+            isOfficial: false,
+            createdAt: 1,
+            updatedAt: 1,
+          },
+          latestRelease: null,
+          owner: { _id: "publishers:demo", handle: "demo" },
+        };
+      }
+      if ("name" in args && "version" in args) {
+        return {
+          package: {
+            _id: "packages:demo-plugin",
+            name: "demo-plugin",
+            displayName: "Demo Plugin",
+            family: "code-plugin",
+          },
+          version: {
+            _id: "packageReleases:1",
+            packageId: "packages:demo-plugin",
+            version: "1.0.0",
+            createdAt: 1,
+            changelog: "Initial release",
+            distTags: ["latest"],
+            files: [
+              {
+                path: "README.md",
+                size: 10,
+                sha256: "file-sha",
+                storageId: "storage:1",
+                contentType: "text/markdown",
+              },
+            ],
+            verification: {
+              tier: "source-linked",
+              scope: "artifact-only",
+              scanStatus: "clean",
+            },
+            sha256hash: "a".repeat(64),
+            vtAnalysis: {
+              status: "clean",
+              verdict: "benign",
+              checkedAt: 1,
+            },
+            llmAnalysis: {
+              status: "clean",
+              verdict: "clean",
+              summary: "Looks safe.",
+              checkedAt: 1,
+            },
+            staticScan: {
+              status: "clean",
+              reasonCodes: [],
+              findings: [],
+              summary: "No issues",
+              engineVersion: "1",
+              checkedAt: 1,
+            },
+          },
+        };
+      }
+      return null;
+    });
+    const runMutation = vi.fn().mockResolvedValue(okRate());
+
+    const response = await __handlers.packagesGetRouterV1Handler(
+      makeCtx({ runQuery, runMutation }),
+      new Request("https://example.com/api/v1/packages/demo-plugin/versions/1.0.0"),
+    );
+
+    if (response.status !== 200) throw new Error(await response.text());
+    await expect(response.json()).resolves.toMatchObject({
+      package: {
+        name: "demo-plugin",
+        family: "code-plugin",
+      },
+      version: {
+        version: "1.0.0",
+        sha256hash: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        vtAnalysis: {
+          status: "clean",
+          verdict: "benign",
+        },
+        llmAnalysis: {
+          status: "clean",
+          verdict: "clean",
+        },
+        staticScan: {
+          status: "clean",
+          summary: "No issues",
+        },
+      },
+    });
+  });
+
   it("treats /packages/search without q as a package detail route", async () => {
     const runMutation = vi.fn().mockResolvedValue(okRate());
     const runQuery = vi.fn(async (_query: unknown, args: Record<string, unknown>) => {
