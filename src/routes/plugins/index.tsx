@@ -1,7 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { Link } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
-import { fetchPackages, type PackageListItem } from "../../lib/packageApi";
+import { fetchPluginCatalog, type PackageListItem } from "../../lib/packageApi";
 import { familyLabel, packageCapabilityLabel } from "../../lib/packageLabels";
 
 type PluginSearchState = {
@@ -38,7 +38,7 @@ export const Route = createFileRoute("/plugins/")({
   }),
   loaderDeps: ({ search }) => search,
   loader: async ({ deps }) => {
-    const data = await fetchPackages({
+    const data = await fetchPluginCatalog({
       q: deps.q,
       cursor: deps.q ? undefined : deps.cursor,
       family: deps.family,
@@ -46,11 +46,9 @@ export const Route = createFileRoute("/plugins/")({
       executesCode: deps.executesCode,
       limit: 50,
     });
-    const allItems = "results" in data ? data.results.map((entry) => entry.package) : data.items;
-    const items = allItems.filter((item) => item.family !== "skill");
     return {
-      items,
-      nextCursor: "results" in data ? null : data.nextCursor,
+      items: data.items,
+      nextCursor: data.nextCursor,
     } satisfies PluginsLoaderData;
   },
   component: PluginsIndex,

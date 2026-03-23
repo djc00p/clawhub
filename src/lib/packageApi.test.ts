@@ -12,6 +12,7 @@ import {
   fetchPackageDetail,
   fetchPackageReadme,
   fetchPackageVersion,
+  fetchPluginCatalog,
   fetchPackages,
   getPackageDownloadPath,
 } from "./packageApi";
@@ -266,5 +267,100 @@ describe("fetchPackages", () => {
     expect(getPackageDownloadPath("private-plugin")).toBe(
       "/api/v1/packages/private-plugin/download",
     );
+  });
+});
+
+describe("fetchPluginCatalog", () => {
+  afterEach(() => {
+    getRequestHeadersMock.mockReset();
+    getRequestUrlMock.mockReset();
+    vi.restoreAllMocks();
+    vi.unstubAllGlobals();
+    vi.unstubAllEnvs();
+  });
+
+  it("uses code and bundle plugin endpoints for browse mode without touching the unified catalog", async () => {
+    vi.stubEnv("VITE_CONVEX_URL", "https://registry.example");
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ items: [], nextCursor: "code:next" }), { status: 200 }),
+      )
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify({ items: [], nextCursor: "bundle:next" }), { status: 200 }),
+      );
+
+    const result = await fetchPluginCatalog({
+      isOfficial: true,
+      limit: 20,
+    });
+
+    expect(result.nextCursor).toContain("plugcat:");
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    const urls = fetchMock.mock.calls.map(([requestUrl]) => new URL(requestUrl as string));
+    expect(urls[0]?.pathname).toBe("/api/v1/code-plugins");
+    expect(urls[1]?.pathname).toBe("/api/v1/bundle-plugins");
+    expect(urls[0]?.searchParams.get("isOfficial")).toBe("true");
+    expect(urls[1]?.searchParams.get("isOfficial")).toBe("true");
+  });
+
+  it("uses code and bundle plugin search endpoints for search mode", async () => {
+    vi.stubEnv("VITE_CONVEX_URL", "https://registry.example");
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            results: [
+              {
+                score: 5,
+                package: {
+                  name: "code-demo",
+                  displayName: "Code Demo",
+                  family: "code-plugin",
+                  channel: "community",
+                  isOfficial: true,
+                  createdAt: 2,
+                  updatedAt: 2,
+                },
+              },
+            ],
+          }),
+          { status: 200 },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            results: [
+              {
+                score: 4,
+                package: {
+                  name: "bundle-demo",
+                  displayName: "Bundle Demo",
+                  family: "bundle-plugin",
+                  channel: "community",
+                  isOfficial: false,
+                  createdAt: 1,
+                  updatedAt: 1,
+                },
+              },
+            ],
+          }),
+          { status: 200 },
+        ),
+      );
+
+    const result = await fetchPluginCatalog({
+      q: "demo",
+      limit: 10,
+    });
+
+    expect(result.nextCursor).toBeNull();
+    expect(result.items.map((item) => item.name)).toEqual(["code-demo", "bundle-demo"]);
+    const urls = fetchMock.mock.calls.map(([requestUrl]) => new URL(requestUrl as string));
+    expect(urls[0]?.pathname).toBe("/api/v1/packages/search");
+    expect(urls[0]?.searchParams.get("family")).toBe("code-plugin");
+    expect(urls[1]?.searchParams.get("family")).toBe("bundle-plugin");
   });
 });

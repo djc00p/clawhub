@@ -4,7 +4,7 @@ import { fireEvent, render, screen } from "@testing-library/react";
 import type { ComponentType, ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const fetchPackagesMock = vi.fn();
+const fetchPluginCatalogMock = vi.fn();
 const navigateMock = vi.fn();
 let searchMock: Record<string, unknown> = {};
 let loaderDataMock: {
@@ -44,7 +44,7 @@ vi.mock("@tanstack/react-router", () => ({
 }));
 
 vi.mock("../lib/packageApi", () => ({
-  fetchPackages: (...args: unknown[]) => fetchPackagesMock(...args),
+  fetchPluginCatalog: (...args: unknown[]) => fetchPluginCatalogMock(...args),
 }));
 
 async function loadRoute() {
@@ -59,7 +59,7 @@ async function loadRoute() {
 
 describe("plugins route", () => {
   beforeEach(() => {
-    fetchPackagesMock.mockReset();
+    fetchPluginCatalogMock.mockReset();
     navigateMock.mockReset();
     searchMock = {};
     loaderDataMock = { items: [], nextCursor: null };
@@ -79,7 +79,7 @@ describe("plugins route", () => {
   });
 
   it("forwards opaque cursors through the loader", async () => {
-    fetchPackagesMock.mockResolvedValue({ items: [], nextCursor: "cursor:next" });
+    fetchPluginCatalogMock.mockResolvedValue({ items: [], nextCursor: "cursor:next" });
     const route = await loadRoute();
     const loader = route.__config.loader as (args: {
       deps: Record<string, unknown>;
@@ -92,7 +92,7 @@ describe("plugins route", () => {
       },
     });
 
-    expect(fetchPackagesMock).toHaveBeenCalledWith(
+    expect(fetchPluginCatalogMock).toHaveBeenCalledWith(
       expect.objectContaining({
         cursor: "cursor:current",
         family: "code-plugin",
@@ -135,7 +135,7 @@ describe("plugins route", () => {
   });
 
   it("filters out skills from loader results", async () => {
-    fetchPackagesMock.mockResolvedValue({
+    fetchPluginCatalogMock.mockResolvedValue({
       items: [
         { name: "my-skill", displayName: "My Skill", family: "skill", channel: "community", isOfficial: false, createdAt: 1, updatedAt: 1 },
         { name: "my-plugin", displayName: "My Plugin", family: "code-plugin", channel: "community", isOfficial: false, createdAt: 1, updatedAt: 1 },
@@ -149,7 +149,28 @@ describe("plugins route", () => {
 
     const result = await loader({ deps: {} });
 
-    expect(result.items).toHaveLength(1);
-    expect(result.items[0].name).toBe("my-plugin");
+    expect(result.items).toHaveLength(2);
+  });
+
+  it("uses plugin-only catalog fetching for verified browse", async () => {
+    fetchPluginCatalogMock.mockResolvedValue({ items: [], nextCursor: null });
+    const route = await loadRoute();
+    const loader = route.__config.loader as (args: {
+      deps: Record<string, unknown>;
+    }) => Promise<unknown>;
+
+    await loader({
+      deps: {
+        verified: true,
+      },
+    });
+
+    expect(fetchPluginCatalogMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        family: undefined,
+        isOfficial: true,
+        limit: 50,
+      }),
+    );
   });
 });
