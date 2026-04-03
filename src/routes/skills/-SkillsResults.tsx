@@ -24,7 +24,7 @@ export function SkillsResults({
   isLoadingSkills,
   sorted,
   view,
-  listDoneLoading,
+  listDoneLoading: _listDoneLoading,
   hasQuery,
   canLoadMore,
   isLoadingMore,

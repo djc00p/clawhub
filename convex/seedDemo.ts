@@ -1,4 +1,3 @@
-import { v } from "convex/values";
 import type { Id } from "./_generated/dataModel";
 import { internalMutation } from "./functions";
 
@@ -209,7 +208,7 @@ export const seedDemoSkills = internalMutation({
 
       // Add membership
       await ctx.db.insert("publisherMembers", {
-        publisherId: pubId as any,
+        publisherId: pubId as Id<"publishers">,
         userId: seedUserId,
         role: "owner",
         createdAt: Date.now(),
@@ -243,7 +242,7 @@ export const seedDemoSkills = internalMutation({
         displayName: s.displayName,
         summary: s.summary,
         ownerUserId: seedUserId,
-        ownerPublisherId: publisherIds[ownerIdx] as any,
+        ownerPublisherId: publisherIds[ownerIdx] as Id<"publishers">,
         tags: {},
         badges,
         moderationStatus: "active",
@@ -303,7 +302,7 @@ export const seedDemoSkills = internalMutation({
         displayName: s.displayName,
         summary: s.summary,
         ownerUserId: seedUserId,
-        ownerPublisherId: publisherIds[ownerIdx] as any,
+        ownerPublisherId: publisherIds[ownerIdx] as Id<"publishers">,
         ownerHandle: DEMO_OWNERS[ownerIdx].handle,
         ownerName: DEMO_OWNERS[ownerIdx].displayName,
         ownerDisplayName: DEMO_OWNERS[ownerIdx].displayName,
@@ -368,7 +367,7 @@ export const repairGlobalStats = internalMutation({
         key: "default",
         activeSkillsCount: count,
         updatedAt: Date.now(),
-      } as any);
+      });
     }
 
     return { count };

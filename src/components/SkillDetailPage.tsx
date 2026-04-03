@@ -209,7 +209,7 @@ export function SkillDetailPage({
     ?.clawdis;
   const osLabels = useMemo(() => formatOsList(clawdis?.os), [clawdis?.os]);
   const nixPlugin = clawdis?.nix?.plugin;
-  const nixSystems = clawdis?.nix?.systems ?? [];
+  const _nixSystems = clawdis?.nix?.systems ?? [];
   const nixSnippet = nixPlugin ? formatNixInstallSnippet(nixPlugin) : null;
   const configRequirements = clawdis?.config;
   const configExample = configRequirements?.example

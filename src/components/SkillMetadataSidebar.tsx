@@ -29,7 +29,7 @@ export function SkillMetadataSidebar({
   latestVersion,
   owner,
   ownerHandle,
-  clawdis,
+  clawdis: _clawdis,
   osLabels,
   tagEntries,
   isMalwareBlocked,

@@ -9,7 +9,7 @@ import type { Doc, Id } from "../../convex/_generated/dataModel";
 import { getSkillBadges } from "../lib/badges";
 import { formatCompactStat, formatSkillStatsTriplet } from "../lib/numberFormat";
 import type { PublicPublisher, PublicSkill } from "../lib/publicUser";
-import { getRuntimeEnv } from "../lib/runtimeEnv";
+
 import { type LlmAnalysis, SecurityScanResults } from "./SkillSecurityScanResults";
 import { UserBadge } from "./UserBadge";
 
@@ -112,10 +112,9 @@ export function SkillHeader({
   onTagSubmit,
   onTagDelete,
   tagVersions,
-  clawdis,
-  osLabels,
+  clawdis: _clawdis,
+  osLabels: _osLabels,
 }: SkillHeaderProps) {
-  const convexSiteUrl = getRuntimeEnv("VITE_CONVEX_SITE_URL") ?? "https://clawhub.ai";
   const formattedStats = formatSkillStatsTriplet(skill.stats);
   const suppressScanResults =
     !isStaff &&
