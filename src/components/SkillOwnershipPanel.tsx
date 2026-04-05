@@ -6,6 +6,14 @@ import { api } from "../../convex/_generated/api";
 import type { Id } from "../../convex/_generated/dataModel";
 import { Button } from "./ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "./ui/card";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "./ui/dialog";
 import { Input } from "./ui/input";
 import { Label } from "./ui/label";
 import { buildSkillHref } from "./skillDetailUtils";
@@ -51,6 +59,8 @@ export function SkillOwnershipPanel({
   const [mergeTargetSlug, setMergeTargetSlug] = useState(ownedSkills[0]?.slug ?? "");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [confirmRename, setConfirmRename] = useState(false);
+  const [confirmMerge, setConfirmMerge] = useState(false);
 
   const ownerHref = (nextSlug: string) => buildSkillHref(ownerHandle, ownerId, nextSlug);
 
@@ -104,6 +114,7 @@ export function SkillOwnershipPanel({
   };
 
   return (
+    <>
     <Card className="border-[color:var(--border-ui)]/30 bg-[color:var(--surface-muted)]/50" data-skill-id={skillId}>
       <CardHeader>
         <CardTitle className="text-base">Owner tools</CardTitle>
@@ -132,9 +143,8 @@ export function SkillOwnershipPanel({
             <Label>Rename action</Label>
             <Button
               variant="outline"
-              onClick={() => void handleRename()}
+              onClick={() => setConfirmRename(true)}
               disabled={isSubmitting || renameSlug.trim().toLowerCase() === slug}
-              loading={isSubmitting}
             >
               Rename and redirect
             </Button>
@@ -161,9 +171,8 @@ export function SkillOwnershipPanel({
             <Label>Merge action</Label>
             <Button
               variant="outline"
-              onClick={() => void handleMerge()}
+              onClick={() => setConfirmMerge(true)}
               disabled={isSubmitting || !mergeTargetSlug}
-              loading={isSubmitting}
             >
               Merge into target
             </Button>
@@ -179,5 +188,62 @@ export function SkillOwnershipPanel({
         </p>
       </CardContent>
     </Card>
+
+    {/* Rename confirmation dialog */}
+    <Dialog open={confirmRename} onOpenChange={setConfirmRename}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Rename skill slug?</DialogTitle>
+          <DialogDescription>
+            This will permanently rename <strong>{slug}</strong> to{" "}
+            <strong>{renameSlug.trim().toLowerCase()}</strong>. The old slug will become a
+            redirect. This cannot be undone without another rename.
+          </DialogDescription>
+        </DialogHeader>
+        <DialogFooter>
+          <Button variant="outline" onClick={() => setConfirmRename(false)}>
+            Cancel
+          </Button>
+          <Button
+            variant="primary"
+            loading={isSubmitting}
+            onClick={() => {
+              void handleRename().finally(() => setConfirmRename(false));
+            }}
+          >
+            Rename
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+
+    {/* Merge confirmation dialog */}
+    <Dialog open={confirmMerge} onOpenChange={setConfirmMerge}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Merge into another skill?</DialogTitle>
+          <DialogDescription>
+            This will hide <strong>{slug}</strong> and redirect it to{" "}
+            <strong>{mergeTargetSlug.trim().toLowerCase()}</strong>. The listing row will be
+            removed from search and browse views. This is not easily reversible.
+          </DialogDescription>
+        </DialogHeader>
+        <DialogFooter>
+          <Button variant="outline" onClick={() => setConfirmMerge(false)}>
+            Cancel
+          </Button>
+          <Button
+            variant="destructive"
+            loading={isSubmitting}
+            onClick={() => {
+              void handleMerge().finally(() => setConfirmMerge(false));
+            }}
+          >
+            Merge and hide
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+    </>
   );
 }

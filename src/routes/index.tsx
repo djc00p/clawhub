@@ -44,7 +44,7 @@ function SkillsHome() {
 
   useEffect(() => {
     let cancelled = false;
-    Promise.all([
+    void Promise.all([
       convexHttp
         .query(api.skills.listHighlightedPublic, { limit: 6 })
         .then((r) => {
