@@ -15,7 +15,7 @@ import { cn } from "../../lib/utils";
 import { DataTablePagination } from "./data-table-pagination";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "./table";
 
-interface DataTableProps<TData, TValue> {
+interface DataTableBaseProps<TData, TValue> {
   columns: ColumnDef<TData, TValue>[];
   data: TData[];
 
@@ -24,8 +24,6 @@ interface DataTableProps<TData, TValue> {
   defaultPageSize?: number;
   pagination?: PaginationState;
   onPaginationChange?: OnChangeFn<PaginationState>;
-  pageCount?: number;
-  manualPagination?: boolean;
 
   // Sorting
   sorting?: SortingState;
@@ -39,6 +37,18 @@ interface DataTableProps<TData, TValue> {
   className?: string;
   emptyMessage?: React.ReactNode;
 }
+
+type DataTableProps<TData, TValue> = DataTableBaseProps<TData, TValue> &
+  (
+    | {
+        manualPagination: true;
+        pageCount: number;
+      }
+    | {
+        manualPagination?: false;
+        pageCount?: number;
+      }
+  );
 
 function DataTable<TData, TValue>({
   columns,
@@ -89,6 +99,8 @@ function DataTable<TData, TValue>({
     pageCount,
   });
 
+  const showPagination = table.getRowModel().rows.length > 0 && table.getPageCount() > 0;
+
   return (
     <div className={cn("space-y-4", className)}>
       <Table>
@@ -125,7 +137,9 @@ function DataTable<TData, TValue>({
           )}
         </TableBody>
       </Table>
-      <DataTablePagination table={table} pageSizeOptions={pageSizeOptions} />
+      {showPagination ? (
+        <DataTablePagination table={table} pageSizeOptions={pageSizeOptions} />
+      ) : null}
     </div>
   );
 }
