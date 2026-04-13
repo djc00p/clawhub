@@ -37,7 +37,7 @@ export const THEME_OPTIONS: Array<{ value: ThemeName; label: string; description
   {
     value: 'dash',
     label: 'Dash',
-    description: 'ClawDash graphite with amber highlights.',
+    description: 'ClawDash monochrome index with terminal-style contrast.',
   },
 ];
 
