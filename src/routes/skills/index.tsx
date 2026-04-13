@@ -112,12 +112,6 @@ export function SkillsIndex() {
   return (
     <main className="browse-page">
       <div className="browse-page-header">
-        <h1 className="browse-title">
-          Skills
-          {totalSkillsText ? (
-            <span className="browse-count">{totalSkillsText}</span>
-          ) : null}
-        </h1>
         <button
           className="browse-sidebar-toggle"
           type="button"
@@ -126,6 +120,12 @@ export function SkillsIndex() {
         >
           Filters
         </button>
+        <h1 className="browse-title">
+          Skills
+          {totalSkillsText ? (
+            <span className="browse-count">{totalSkillsText}</span>
+          ) : null}
+        </h1>
       </div>
       <div className="browse-page-search">
         <Search size={15} className="navbar-search-icon" aria-hidden="true" />

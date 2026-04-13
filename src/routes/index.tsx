@@ -14,7 +14,7 @@ import {
   Users,
   Zap,
 } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { api } from "../../convex/_generated/api";
 import { SkillCard } from "../components/SkillCard";
 import { SkillListItem } from "../components/SkillListItem";
@@ -88,7 +88,7 @@ function SkillsHome() {
     ])
       .then(([h, t, r, c]) => {
         if (cancelled) return;
-        setHighlighted(h as SkillPageEntry[]);
+        setHighlighted((h as SkillPageEntry[]).slice(0, 6));
         setTrending((t as { page: SkillPageEntry[] }).page);
         setRecent((r as { page: SkillPageEntry[] }).page);
         setSkillCount(c as number);
@@ -109,6 +109,13 @@ function SkillsHome() {
       search: { q, type: undefined },
     });
   };
+
+  const highlightedGridStyle = {
+    "--staff-picks-cols-lg": String(Math.max(1, Math.min(highlighted.length, 6))),
+    "--staff-picks-cols-md": String(Math.max(1, Math.min(highlighted.length, 3))),
+    "--staff-picks-cols-sm": String(Math.max(1, Math.min(highlighted.length, 2))),
+    "--staff-picks-cols-xs": "1",
+  } as CSSProperties;
 
   return (
     <main>
@@ -361,7 +368,7 @@ function SkillsHome() {
               <ArrowRight size={14} />
             </Link>
           </div>
-          <div className="grid">
+          <div className="home-staff-picks-grid" style={highlightedGridStyle}>
             {highlighted.map((entry) => (
               <SkillCard
                 key={entry.skill._id}

@@ -24,6 +24,14 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "./ui/dropdown-menu";
+import {
+  Sheet,
+  SheetClose,
+  SheetContent,
+  SheetDescription,
+  SheetHeader,
+  SheetTitle,
+} from "./ui/sheet";
 import { ToggleGroup, ToggleGroupItem } from "./ui/toggle-group";
 
 const NAV_ICONS: Record<NavIconName, React.ComponentType<{ size?: number; className?: string }>> = {
@@ -60,6 +68,7 @@ export default function Header() {
 
   const [navSearchQuery, setNavSearchQuery] = useState("");
   const [mobileSearchOpen, setMobileSearchOpen] = useState(false);
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   const setTheme = (next: "system" | "light" | "dark") => {
     startThemeTransition({
@@ -91,15 +100,95 @@ export default function Header() {
       <div className="navbar-inner">
         {/* Row 1: Brand + Search + Actions */}
         <div className="navbar-top">
+          <div className="nav-mobile">
+            <Sheet open={mobileMenuOpen} onOpenChange={setMobileMenuOpen}>
+              <button
+                className="nav-mobile-trigger"
+                type="button"
+                aria-label="Open menu"
+                onClick={() => setMobileMenuOpen(true)}
+              >
+                <Menu className="h-4 w-4" aria-hidden="true" />
+              </button>
+              <SheetContent side="left" className="mobile-nav-sheet">
+                <SheetHeader className="pr-10">
+                  <SheetTitle>{siteName}</SheetTitle>
+                  <SheetDescription>
+                    Browse sections, switch theme, and access account actions.
+                  </SheetDescription>
+                </SheetHeader>
+                <div className="mobile-nav-section">
+                  {isSoulMode ? (
+                    <SheetClose asChild>
+                      <a href={clawHubUrl} className="mobile-nav-link">
+                        ClawHub
+                      </a>
+                    </SheetClose>
+                  ) : null}
+                  {primaryItems.map((item) => (
+                    <SheetClose key={item.to + item.label} asChild>
+                      <Link to={item.to} search={item.search ?? {}} className="mobile-nav-link">
+                        {item.label}
+                      </Link>
+                    </SheetClose>
+                  ))}
+                  {secondaryItems.map((item) => (
+                    <SheetClose key={item.to + item.label} asChild>
+                      <Link to={item.to} search={item.search ?? {}} className="mobile-nav-link">
+                        {item.label === "Management" ? "Manage" : item.label}
+                      </Link>
+                    </SheetClose>
+                  ))}
+                </div>
+                <div className="mobile-nav-section">
+                  <div className="mobile-nav-section-title">Theme</div>
+                  <button
+                    className="mobile-nav-link"
+                    type="button"
+                    onClick={() => {
+                      setTheme("system");
+                      setMobileMenuOpen(false);
+                    }}
+                  >
+                    <Monitor className="h-4 w-4" aria-hidden="true" />
+                    System
+                  </button>
+                  <button
+                    className="mobile-nav-link"
+                    type="button"
+                    onClick={() => {
+                      setTheme("light");
+                      setMobileMenuOpen(false);
+                    }}
+                  >
+                    <Sun className="h-4 w-4" aria-hidden="true" />
+                    Light
+                  </button>
+                  <button
+                    className="mobile-nav-link"
+                    type="button"
+                    onClick={() => {
+                      setTheme("dark");
+                      setMobileMenuOpen(false);
+                    }}
+                  >
+                    <Moon className="h-4 w-4" aria-hidden="true" />
+                    Dark
+                  </button>
+                </div>
+              </SheetContent>
+            </Sheet>
+          </div>
+
           <Link
             to="/"
             search={{ q: undefined, highlighted: undefined, search: undefined }}
             className="brand"
           >
             <span className="brand-mark">
-              <img src="/clawd-logo.png" alt="" aria-hidden="true" />
+              <img src="/clawd-logo.png" alt="" aria-hidden="true" className="brand-mark-image" />
             </span>
-            <span className="brand-name">{siteName}</span>
+            <span className="brand-name brand-name-responsive">{siteName}</span>
           </Link>
 
           <form className="navbar-search" onSubmit={handleNavSearch} role="search" aria-label="Site search">
@@ -123,49 +212,6 @@ export default function Header() {
             >
               <Search size={18} aria-hidden="true" />
             </button>
-            <div className="nav-mobile">
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <button className="nav-mobile-trigger" type="button" aria-label="Open menu">
-                    <Menu className="h-4 w-4" aria-hidden="true" />
-                  </button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="end">
-                  {isSoulMode ? (
-                    <DropdownMenuItem asChild>
-                      <a href={clawHubUrl}>ClawHub</a>
-                    </DropdownMenuItem>
-                  ) : null}
-                  {primaryItems.map((item) => (
-                    <DropdownMenuItem key={item.to + item.label} asChild>
-                      <Link to={item.to} search={item.search ?? {}}>
-                        {item.label}
-                      </Link>
-                    </DropdownMenuItem>
-                  ))}
-                  {secondaryItems.map((item) => (
-                    <DropdownMenuItem key={item.to + item.label} asChild>
-                      <Link to={item.to} search={item.search ?? {}}>
-                        {item.label}
-                      </Link>
-                    </DropdownMenuItem>
-                  ))}
-                  <DropdownMenuSeparator />
-                  <DropdownMenuItem onClick={() => setTheme("system")}>
-                    <Monitor className="h-4 w-4" aria-hidden="true" />
-                    System
-                  </DropdownMenuItem>
-                  <DropdownMenuItem onClick={() => setTheme("light")}>
-                    <Sun className="h-4 w-4" aria-hidden="true" />
-                    Light
-                  </DropdownMenuItem>
-                  <DropdownMenuItem onClick={() => setTheme("dark")}>
-                    <Moon className="h-4 w-4" aria-hidden="true" />
-                    Dark
-                  </DropdownMenuItem>
-                </DropdownMenuContent>
-              </DropdownMenu>
-            </div>
             <div className="theme-toggle" ref={toggleRef}>
               <ToggleGroup
                 type="single"

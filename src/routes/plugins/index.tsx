@@ -142,16 +142,16 @@ function PluginsIndex() {
   return (
     <main className="browse-page">
       <div className="browse-page-header">
+        <button
+          className="browse-sidebar-toggle"
+          type="button"
+          onClick={() => setSidebarOpen(!sidebarOpen)}
+          aria-label="Toggle filters"
+        >
+          Filters
+        </button>
         <h1 className="browse-title">Plugins</h1>
-        <div className="flex items-center gap-2">
-          <button
-            className="browse-sidebar-toggle"
-            type="button"
-            onClick={() => setSidebarOpen(!sidebarOpen)}
-            aria-label="Toggle filters"
-          >
-            Filters
-          </button>
+        <div className="browse-page-actions">
           <Button asChild variant="primary">
             <Link
               to="/publish-plugin"

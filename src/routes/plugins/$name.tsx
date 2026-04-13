@@ -265,7 +265,7 @@ function PluginDetailRoute() {
 
   return (
     <main className="section">
-        <div className="flex flex-col gap-5">
+        <div className="flex min-w-0 flex-col gap-5">
           {/* Header card */}
           <Card>
             <CardContent>
@@ -283,7 +283,7 @@ function PluginDetailRoute() {
                   </Badge>
                 ) : null}
               </div>
-              <h1 className="font-display text-2xl font-bold text-[color:var(--ink)] mb-1">
+              <h1 className="mb-1 break-words font-display text-2xl font-bold text-[color:var(--ink)]">
                 {pkg.displayName}
                 {pkg.latestVersion ? (
                   <span className="ml-2 inline-block rounded-[var(--radius-pill)] bg-[color:var(--surface-muted)] px-2 py-0.5 text-xs font-semibold text-[color:var(--ink-soft)]">
@@ -291,16 +291,16 @@ function PluginDetailRoute() {
                   </span>
                 ) : null}
               </h1>
-              <p className="text-sm text-[color:var(--ink-soft)] mb-2">
+              <p className="mb-2 break-words text-sm text-[color:var(--ink-soft)]">
                 {pkg.summary ?? "No summary provided."}
               </p>
-              <div className="flex flex-wrap items-center gap-2 text-sm text-[color:var(--ink-soft)]">
-                <span className="font-mono text-xs">{pkg.name}</span>
+              <div className="flex min-w-0 flex-wrap items-center gap-2 text-sm text-[color:var(--ink-soft)]">
+                <span className="break-all font-mono text-xs">{pkg.name}</span>
                 {pkg.runtimeId ? (
                   <>
                     <span className="opacity-40">&middot;</span>
                     <span>
-                      runtime <span className="font-mono text-xs">{pkg.runtimeId}</span>
+                      runtime <span className="break-all font-mono text-xs">{pkg.runtimeId}</span>
                     </span>
                   </>
                 ) : null}
@@ -327,7 +327,7 @@ function PluginDetailRoute() {
               {/* Install */}
               <div className="mt-4">
                 <div className="flex flex-col gap-3 rounded-[var(--radius-sm)] border border-[color:var(--line)] bg-[color:var(--surface-muted)] p-3 sm:flex-row sm:items-center sm:gap-2">
-                  <pre className="min-w-0 flex-1 overflow-x-auto font-mono text-xs text-[color:var(--ink)]">
+                  <pre className="plugin-detail-code-block min-w-0 flex-1 font-mono text-xs text-[color:var(--ink)]">
                     <code>{installSnippet}</code>
                   </pre>
                   <CopyButton text={installSnippet} />
@@ -365,7 +365,7 @@ function PluginDetailRoute() {
                       <dt className="font-semibold text-[color:var(--ink-soft)] sm:pr-2">
                         {CAPABILITY_LABELS[key] ?? key}
                       </dt>
-                      <dd className="text-[color:var(--ink)]">
+                      <dd className="min-w-0 break-words text-[color:var(--ink)]">
                         {key === "capabilityTags" && Array.isArray(value) ? (
                           <div className="flex flex-wrap gap-1.5">
                             {(value as string[]).map((tag) => (
@@ -407,7 +407,9 @@ function PluginDetailRoute() {
                       <dt className="font-semibold text-[color:var(--ink-soft)] sm:pr-2">
                         {key.replace(/([A-Z])/g, " $1").replace(/^./, (s) => s.toUpperCase())}
                       </dt>
-                      <dd className="font-mono text-xs text-[color:var(--ink)]">{String(value)}</dd>
+                      <dd className="min-w-0 break-all font-mono text-xs text-[color:var(--ink)]">
+                        {String(value)}
+                      </dd>
                     </div>
                   ))}
                 </dl>
@@ -472,7 +474,7 @@ function PluginDetailRoute() {
                                 href={href}
                                 target="_blank"
                                 rel="noopener noreferrer"
-                                className="inline-flex items-center gap-1 text-[color:var(--accent)] hover:underline"
+                                className="inline-flex max-w-full flex-wrap items-center gap-1 break-all text-[color:var(--accent)] hover:underline"
                               >
                                 {display}
                                 <ExternalLink className="h-3 w-3" aria-hidden="true" />
@@ -485,7 +487,7 @@ function PluginDetailRoute() {
                   {verification.sourceCommit ? (
                     <div className="flex flex-col gap-1.5 border-b border-[color:var(--line)] pb-3 sm:grid sm:grid-cols-[minmax(140px,220px)_1fr] sm:gap-x-4 sm:gap-y-0">
                       <dt className="font-semibold text-[color:var(--ink-soft)]">Commit</dt>
-                      <dd className="font-mono text-xs text-[color:var(--ink)]">
+                      <dd className="min-w-0 break-all font-mono text-xs text-[color:var(--ink)]">
                         {verification.sourceCommit.slice(0, 12)}
                       </dd>
                     </div>
@@ -493,7 +495,7 @@ function PluginDetailRoute() {
                   {verification.sourceTag ? (
                     <div className="flex flex-col gap-1.5 border-b border-[color:var(--line)] pb-3 sm:grid sm:grid-cols-[minmax(140px,220px)_1fr] sm:gap-x-4 sm:gap-y-0">
                       <dt className="font-semibold text-[color:var(--ink-soft)]">Tag</dt>
-                      <dd className="font-mono text-xs text-[color:var(--ink)]">
+                      <dd className="min-w-0 break-all font-mono text-xs text-[color:var(--ink)]">
                         {verification.sourceTag}
                       </dd>
                     </div>
@@ -528,7 +530,9 @@ function PluginDetailRoute() {
                   {Object.entries(pkg.tags).map(([key, value]) => (
                     <div key={key} className="flex flex-col gap-1.5 border-b border-[color:var(--line)] pb-3 last:border-b-0 last:pb-0 sm:grid sm:grid-cols-[minmax(140px,220px)_1fr] sm:gap-x-4 sm:gap-y-0">
                       <dt className="font-semibold text-[color:var(--ink-soft)]">{key}</dt>
-                      <dd className="font-mono text-xs text-[color:var(--ink)]">{value}</dd>
+                      <dd className="min-w-0 break-all font-mono text-xs text-[color:var(--ink)]">
+                        {value}
+                      </dd>
                     </div>
                   ))}
                 </dl>
