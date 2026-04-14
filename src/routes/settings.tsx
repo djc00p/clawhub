@@ -291,29 +291,6 @@ export function Settings() {
             {/* Theme Section */}
             <div className="space-y-3">
               <Label id="theme" className="text-sm font-semibold text-[color:var(--ink)]">Theme</Label>
-              <div className="grid gap-3 sm:grid-cols-3">
-                {THEME_FAMILY_OPTIONS.map((option) => (
-                  <button
-                    key={option.value}
-                    type="button"
-                    onClick={() => setThemeFamily(option.value)}
-                    className="rounded-[var(--r-md)] border p-4 text-left transition-colors"
-                    style={{
-                      borderColor:
-                        themeFamily === option.value ? "var(--accent)" : "var(--border-ui)",
-                      background:
-                        themeFamily === option.value
-                          ? "var(--accent-subtle)"
-                          : "var(--surface-muted)",
-                    }}
-                  >
-                    <div className="text-sm font-semibold text-[color:var(--ink)]">{option.label}</div>
-                    <div className="mt-1 text-xs text-[color:var(--ink-soft)]">
-                      {option.description}
-                    </div>
-                  </button>
-                ))}
-              </div>
               <div className="flex flex-wrap gap-2">
                 <Button
                   variant={themeMode === "light" ? "primary" : "ghost"}

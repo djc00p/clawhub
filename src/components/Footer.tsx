@@ -12,7 +12,7 @@ export function Footer() {
           {FOOTER_NAV_SECTIONS.map((section) => (
             <div key={section.title} className="footer-col">
               <h4 className="footer-col-title">{section.title}</h4>
-              {section.items.map((item) => {
+              {section.items.filter((item) => item.featureFlag !== false).map((item) => {
                 if (item.kind === "link") {
                   return (
                     <Link key={item.label} to={item.to} search={item.search ?? {}}>

@@ -1,3 +1,5 @@
+import { FEATURE_SOULS } from "./features";
+
 /**
  * Shared navigation configuration used by Header and Footer to eliminate
  * triple duplication of nav link definitions.
@@ -25,6 +27,8 @@ export interface NavItem {
   soulModeHide: boolean;
   /** Additional path prefixes that should also highlight this nav item (e.g. /skill for /skills) */
   activePathPrefixes?: string[];
+  /** Feature flag that must be truthy for this item to show */
+  featureFlag?: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -90,9 +94,9 @@ export const PRIMARY_NAV_ITEMS: NavItem[] = [
     authRequired: false,
     staffOnly: false,
     soulModeOnly: false,
-    // In soul-mode this is the primary tab; in skills-mode it is also shown.
     soulModeHide: false,
     activePathPrefixes: ["/soul/"],
+    featureFlag: FEATURE_SOULS,
   },
 ];
 
@@ -155,9 +159,9 @@ export interface FooterNavSection {
 }
 
 export type FooterNavItem =
-  | { kind: "link"; label: string; to: string; search?: Record<string, unknown> }
-  | { kind: "external"; label: string; href: string }
-  | { kind: "text"; label: string };
+  | { kind: "link"; label: string; to: string; search?: Record<string, unknown>; featureFlag?: boolean }
+  | { kind: "external"; label: string; href: string; featureFlag?: boolean }
+  | { kind: "text"; label: string; featureFlag?: boolean };
 
 export const FOOTER_NAV_SECTIONS: FooterNavSection[] = [
   {
@@ -165,7 +169,7 @@ export const FOOTER_NAV_SECTIONS: FooterNavSection[] = [
     items: [
       { kind: "link", label: "Skills", to: "/skills", search: SKILLS_SEARCH },
       { kind: "link", label: "Plugins", to: "/plugins" },
-      { kind: "link", label: "Souls", to: "/souls", search: SOULS_SEARCH },
+      { kind: "link", label: "Souls", to: "/souls", search: SOULS_SEARCH, featureFlag: FEATURE_SOULS },
     ],
   },
   {
@@ -229,6 +233,7 @@ export function filterNavItems(
     if (item.soulModeHide && ctx.isSoulMode) return false;
     if (item.authRequired && !ctx.isAuthenticated) return false;
     if (item.staffOnly && !ctx.isStaff) return false;
+    if (item.featureFlag === false) return false;
     return true;
   });
 }

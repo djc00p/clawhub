@@ -260,32 +260,7 @@ export default function Header() {
               <Search size={18} aria-hidden="true" />
             </button>
             <div className="theme-toggle" ref={toggleRef}>
-              <div className="theme-picker-desktop" aria-label={`Theme family, current ${themeLabel}`}>
-                <div className="theme-family-toggle" role="group" aria-label="Theme family">
-                  {THEME_OPTIONS.map((option) => (
-                    <button
-                      key={option.value}
-                      type="button"
-                      className="theme-family-button"
-                      data-state={theme === option.value ? "on" : "off"}
-                      aria-pressed={theme === option.value}
-                      onClick={() => setThemeFamily(option.value)}
-                    >
-                      {option.label}
-                    </button>
-                  ))}
-                </div>
-              </div>
-              <div className="theme-cycle-group" aria-label="Theme controls">
-                <button
-                  type="button"
-                  className="theme-cycle-button theme-cycle-button-family"
-                  onClick={cycleThemeFamily}
-                  aria-label={`Cycle theme family. Current: ${themeLabel}`}
-                  title={`Theme family: ${themeLabel}`}
-                >
-                  <ThemeFamilyIcon className="h-4 w-4" aria-hidden="true" />
-                </button>
+<div className="theme-cycle-group" aria-label="Theme controls">
                 <button
                   type="button"
                   className="theme-cycle-button theme-cycle-button-mode"
