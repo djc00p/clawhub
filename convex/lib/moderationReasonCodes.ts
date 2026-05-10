@@ -12,7 +12,7 @@ export type ModerationFinding = {
   evidence: string;
 };
 
-export const MODERATION_ENGINE_VERSION = "v2.4.22";
+export const MODERATION_ENGINE_VERSION = "v2.4.23";
 
 export const REASON_CODES = {
   DANGEROUS_EXEC: "suspicious.dangerous_exec",
@@ -43,6 +43,7 @@ export const REASON_CODES = {
   MANIFEST_PRIVILEGED_ALWAYS: "suspicious.privileged_always",
   MALICIOUS_INSTALL_PROMPT: "malicious.install_terminal_payload",
   KNOWN_BLOCKED_SIGNATURE: "malicious.known_blocked_signature",
+  STEALTH_BROWSER_ABUSE: "malicious.stealth_browser_abuse",
   DEP_NOT_FOUND: "suspicious.dep_not_found_on_registry",
 } as const;
 
@@ -50,6 +51,7 @@ const MALICIOUS_CODES = new Set<string>([
   REASON_CODES.CRYPTO_MINING,
   REASON_CODES.MALICIOUS_INSTALL_PROMPT,
   REASON_CODES.KNOWN_BLOCKED_SIGNATURE,
+  REASON_CODES.STEALTH_BROWSER_ABUSE,
 ]);
 
 const EXTERNALLY_CLEARABLE_SUSPICIOUS_CODES = new Set<string>([REASON_CODES.CREDENTIAL_HARVEST]);

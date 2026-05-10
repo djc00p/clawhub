@@ -33,6 +33,7 @@
 - Search/Web: disclose when `/search` is hiding suspicious skills and add an explicit opt-out so unified search no longer silently differs from `/skills` for the same query (#2079) (thanks @momothemage).
 - Web: constrain settings, profile content, skill detail, and plugin detail pages to the header content width while preserving profile hero bleed (thanks @vyctorbrzezowski).
 - Moderation: let platform moderators and admins trigger skill/package security rescans for any owner from the CLI, without consuming the owner recovery cap.
+- ClawScan: reduce false positives for scoped uninstall cleanup, declared provider login flows, Basic Auth/base64 handling, and user-directed provider uploads while hard-blocking stealth browser abuse patterns.
 
 ## 0.12.3 - 2026-05-06
 

@@ -290,6 +290,31 @@ describe("moderationEngine", () => {
     expect(result.status).toBe("clean");
   });
 
+  it("blocks stealth browser automation that advertises bot-protection bypass and persistent sessions", () => {
+    const result = runStaticModerationScan({
+      slug: "stealth-browser",
+      displayName: "Stealth Browser",
+      summary: "Anti-detect browser automation",
+      frontmatter: {},
+      metadata: {},
+      files: [{ path: "SKILL.md", size: 512 }],
+      fileContents: [
+        {
+          path: "SKILL.md",
+          content: [
+            "# Stealth Browser",
+            "Use anti-detect browser automation with fingerprint spoofing.",
+            "Bypass Cloudflare, Turnstile, and CAPTCHA checks during scraping.",
+            "Persist cookies and session state between runs with a userDataDir profile.",
+          ].join("\n"),
+        },
+      ],
+    });
+
+    expect(result.reasonCodes).toContain("malicious.stealth_browser_abuse");
+    expect(result.status).toBe("malicious");
+  });
+
   it("flags wallet mnemonics passed as CLI argv", () => {
     const result = runStaticModerationScan({
       slug: "primer-x402",
@@ -831,7 +856,7 @@ describe("moderationEngine", () => {
     expect(result.status).toBe("suspicious");
   });
 
-  it("flags Python credential POSTs to env-controlled URLs", () => {
+  it("does not flag declared Python credential POSTs to declared env-controlled provider URLs", () => {
     const result = runStaticModerationScan({
       slug: "webuntis",
       displayName: "WebUntis",
@@ -840,6 +865,37 @@ describe("moderationEngine", () => {
       metadata: {
         requires: {
           env: ["WEBUNTIS_USER", "WEBUNTIS_PASS", "WEBUNTIS_BASE_URL"],
+        },
+      },
+      files: [{ path: "scripts/webuntis.py", size: 512 }],
+      fileContents: [
+        {
+          path: "scripts/webuntis.py",
+          content: [
+            "import os",
+            "import requests",
+            "password = os.environ['WEBUNTIS_PASS']",
+            "base_url = os.environ.get('WEBUNTIS_BASE_URL')",
+            "payload = {'user': user, 'password': password, 'client': 'openclaw'}",
+            "session.post(f'{base_url}/WebUntis/jsonrpc.do', json=payload, timeout=15)",
+          ].join("\n"),
+        },
+      ],
+    });
+
+    expect(result.reasonCodes).not.toContain("suspicious.env_credential_access");
+    expect(result.status).toBe("clean");
+  });
+
+  it("still flags Python credential POSTs to undeclared env-controlled URLs", () => {
+    const result = runStaticModerationScan({
+      slug: "webuntis",
+      displayName: "WebUntis",
+      summary: "Read timetable data",
+      frontmatter: {},
+      metadata: {
+        requires: {
+          env: ["WEBUNTIS_PASS"],
         },
       },
       files: [{ path: "scripts/webuntis.py", size: 512 }],
@@ -1121,6 +1177,37 @@ describe("moderationEngine", () => {
     expect(result.status).toBe("suspicious");
   });
 
+  it("does not flag user-selected image uploads to a provider API as exfiltration", () => {
+    const result = runStaticModerationScan({
+      slug: "bria-ai",
+      displayName: "Bria AI",
+      summary: "Send selected images to Bria for editing",
+      frontmatter: {},
+      metadata: {
+        requires: {
+          env: ["BRIA_API_KEY"],
+        },
+      },
+      files: [{ path: "src/bria.ts", size: 256 }],
+      fileContents: [
+        {
+          path: "src/bria.ts",
+          content: [
+            "const imageBuffer = readFileSync(inputImagePath);",
+            "await fetch('https://api.bria.ai/v1/edit', {",
+            "  method: 'POST',",
+            "  headers: { Authorization: `Bearer ${process.env.BRIA_API_KEY}` },",
+            "  body: imageBuffer,",
+            "});",
+          ].join("\n"),
+        },
+      ],
+    });
+
+    expect(result.reasonCodes).not.toContain("suspicious.potential_exfiltration");
+    expect(result.status).toBe("clean");
+  });
+
   it("flags shell wrappers that base64-upload local files", () => {
     const result = runStaticModerationScan({
       slug: "paddleocr-doc-parsing",
@@ -1215,6 +1302,55 @@ describe("moderationEngine", () => {
         {
           path: "scripts/encode.sh",
           content: 'input_file="$1"\nbase64 "$input_file" > encoded.txt',
+        },
+      ],
+    });
+
+    expect(result.reasonCodes).not.toContain("suspicious.potential_exfiltration");
+    expect(result.status).toBe("clean");
+  });
+
+  it("does not flag Basic Auth base64 encoding as file exfiltration", () => {
+    const result = runStaticModerationScan({
+      slug: "harbor-skills",
+      displayName: "Harbor Skills",
+      summary: "Manage Harbor registry APIs",
+      frontmatter: {},
+      metadata: {},
+      files: [{ path: "scripts/harbor.sh", size: 256 }],
+      fileContents: [
+        {
+          path: "scripts/harbor.sh",
+          content: [
+            'auth="$(printf "%s:%s" "$HARBOR_USER" "$HARBOR_PASSWORD" | base64)"',
+            'curl -sS "https://harbor.example.com/api/v2.0/projects" -H "Authorization: Basic $auth"',
+          ].join("\n"),
+        },
+      ],
+    });
+
+    expect(result.reasonCodes).not.toContain("suspicious.potential_exfiltration");
+    expect(result.status).toBe("clean");
+  });
+
+  it("does not flag API response base64 decoding into an output file", () => {
+    const result = runStaticModerationScan({
+      slug: "moss-voice-generator",
+      displayName: "Moss Voice Generator",
+      summary: "Generate audio with a provider API",
+      frontmatter: {},
+      metadata: {},
+      files: [{ path: "scripts/voice.py", size: 256 }],
+      fileContents: [
+        {
+          path: "scripts/voice.py",
+          content: [
+            "import base64",
+            "import requests",
+            "response = requests.post('https://api.example.com/audio', json={'text': text})",
+            "audio = base64.b64decode(response.json()['audio_base64'])",
+            "Path(output_path).write_bytes(audio)",
+          ].join("\n"),
         },
       ],
     });
@@ -1481,6 +1617,58 @@ describe("moderationEngine", () => {
             "# Reinstall",
             "rm -rf /root/.openclaw/venv/stt-simple",
             "/root/.openclaw/workspace/skills/stt-simple/install.sh",
+            "```",
+          ].join("\n"),
+        },
+      ],
+    });
+
+    expect(result.reasonCodes).toContain("suspicious.destructive_delete_command");
+    expect(result.status).toBe("suspicious");
+  });
+
+  it("does not flag scoped uninstall cleanup of a skill-owned OpenClaw directory", () => {
+    const result = runStaticModerationScan({
+      slug: "heartbeat-memories",
+      displayName: "Heartbeat Memories",
+      summary: "Memory helper",
+      frontmatter: {},
+      metadata: {},
+      files: [{ path: "SKILL.md", size: 512 }],
+      fileContents: [
+        {
+          path: "SKILL.md",
+          content: [
+            "## Uninstall",
+            "Remove the generated helper files:",
+            "```bash",
+            "rm -rf ~/.openclaw/skills/heartbeat-memories",
+            "```",
+          ].join("\n"),
+        },
+      ],
+    });
+
+    expect(result.reasonCodes).not.toContain("suspicious.destructive_delete_command");
+    expect(result.status).toBe("clean");
+  });
+
+  it("does not allow uninstall cleanup to delete unrelated OpenClaw directories", () => {
+    const result = runStaticModerationScan({
+      slug: "heartbeat-memories",
+      displayName: "Heartbeat Memories",
+      summary: "Memory helper",
+      frontmatter: {},
+      metadata: {},
+      files: [{ path: "SKILL.md", size: 512 }],
+      fileContents: [
+        {
+          path: "SKILL.md",
+          content: [
+            "## Uninstall",
+            "Remove stale credentials:",
+            "```bash",
+            "rm -rf ~/.openclaw/secrets",
             "```",
           ].join("\n"),
         },

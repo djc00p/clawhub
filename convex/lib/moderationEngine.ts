@@ -112,7 +112,7 @@ const SECRET_ARGV_REDACTION_PATTERN =
 const DYNAMIC_CODE_EXECUTION_PATTERN =
   /\beval\s*\(|new\s+Function\s*\(|\b(?:[A-Za-z_][A-Za-z0-9_]*\.)?loader\.exec_module\s*\(/;
 const SHELL_BASE64_FILE_READ_PATTERN =
-  /(?:\bcat\s+["']?\$[A-Za-z_][A-Za-z0-9_]*["']?\s*\|\s*base64\b|\bbase64\b[^\n]{0,80}["']?\$[A-Za-z_][A-Za-z0-9_]*["']?)/i;
+  /(?:\bcat\s+["']?\$[A-Za-z_][A-Za-z0-9_]*(?:file|path|input|image|document|pdf)[A-Za-z0-9_]*["']?\s*\|\s*base64\b|\bbase64\b[^\n]{0,80}["']?\$[A-Za-z_][A-Za-z0-9_]*(?:file|path|input|image|document|pdf)[A-Za-z0-9_]*["']?)/i;
 const SHELL_NETWORK_UPLOAD_PATTERN =
   /\bcurl\b[\s\S]{0,1600}(?:--data(?:-binary|-raw)?\b|-d\b|--form\b|-F\b|--upload-file\b|Authorization\s*:)/i;
 const PYTHON_BASE64_FILE_READ_PATTERN =
@@ -125,6 +125,11 @@ const SVG_HTML_INTERPOLATION_PATTERN =
   /(?:<body>[\s\S]{0,240}\$\{[^}]*svg[^}]*\}|writeFile(?:Sync)?\s*\([^)]*\.html[^)]*\$\{[^}]*svg[^}]*\}|\$\{[^}]*svg[^}]*\}[\s\S]{0,240}<\/body>)/i;
 const BROWSER_JS_DISABLED_PATTERN =
   /javaScriptEnabled\s*:\s*false|Content-Security-Policy|script-src\s+['"]?none/i;
+const STEALTH_BROWSER_CONTEXT_PATTERN =
+  /\b(?:stealth|anti[-\s]?detect|undetected|fingerprint spoof|navigator\.webdriver)\b/i;
+const BOT_PROTECTION_BYPASS_PATTERN = /\b(?:captcha|cloudflare|turnstile|bot detection|waf)\b/i;
+const BROWSER_SESSION_PERSISTENCE_PATTERN =
+  /\b(?:persistent_context|userDataDir|storageState|session persistence|persist(?:ed)? cookies?)\b/i;
 const AGENT_OUTPUT_DIR_ARGUMENT_PATTERN =
   /add_argument\s*\(\s*["']--outdir["']|args\.outdir|output_path\s*=\s*Path\s*\(\s*args\.outdir\s*\)/i;
 const FFMPEG_FORCE_OUTPUT_PATTERN =
@@ -146,6 +151,12 @@ const PYTHON_URL_ENV_PATTERN =
 const PYTHON_HTTP_POST_PATTERN =
   /\b(?:requests|session|self\.session|client)\.post\s*\(|\.post\s*\(/i;
 const PASSWORD_PAYLOAD_PATTERN = /["']password["']\s*:|password\s*=/i;
+const JS_FILE_READ_PATTERN = /\b(?:readFileSync|readFile)\s*\(/;
+const JS_NETWORK_SEND_PATTERN = /\bfetch\s*\(|http\.request\s*\(|\baxios\b/;
+const SENSITIVE_FILE_READ_CONTEXT_PATTERN =
+  /(?:readFileSync|readFile)\s*\([^)]*(?:secret|token|credential|password|passwd|private[-_]?key|\.env\b|\.ssh\/|\.aws\/|\.config\/|keychain|cookies?|session|auth|\/etc\/|\/Library\/|\/Users\/[^/\s"'`]+\/Library\/Application Support)/i;
+const SENSITIVE_LOCAL_VALUE_NAME_PATTERN =
+  /(?:secret|token|credential|password|passwd|privateKey|private_key|apiKey|api_key|session|cookie|auth)/i;
 const AUTONOMOUS_AGENT_SCHEDULE_PATTERN =
   /\bAUTO_ANSWER\s*=\s*(?:true|os\.getenv\s*\(\s*["']AUTO_ANSWER["']\s*,\s*["']true["'])|while\s+True\s*:|time\.sleep\s*\(\s*(?:[3-9]\d{2,}|[1-9]\d{3,})\s*\)|\binterval\s*=\s*(?:[3-9]\d{2,}|[1-9]\d{3,})|"kind"\s*:\s*"cron"|"expr"\s*:\s*["'][^"']*\*\/(?:[1-5]?\d)\b/is;
 const CREDENTIAL_BEARING_AGENT_PATTERN =
@@ -340,14 +351,35 @@ function hasNearbyConfirmationGate(lines: string[], commandIndex: number) {
   ].some((pattern) => pattern.test(context));
 }
 
-function findUnguardedDestructiveDelete(content: string) {
+function findUnguardedDestructiveDelete(content: string, slug?: string) {
   const lines = content.split("\n");
   for (let i = 0; i < lines.length; i += 1) {
     if (!DESTRUCTIVE_DELETE_PATTERN.test(lines[i])) continue;
     if (hasNearbyConfirmationGate(lines, i)) continue;
+    if (
+      hasNearbyUninstallCleanupContext(lines, i) &&
+      isScopedOpenClawDelete(lines[i] ?? "", slug)
+    ) {
+      continue;
+    }
     return { line: i + 1, text: lines[i] };
   }
   return null;
+}
+
+function hasNearbyUninstallCleanupContext(lines: string[], commandIndex: number) {
+  const start = Math.max(0, commandIndex - 10);
+  const context = lines.slice(start, commandIndex + 1).join("\n");
+  return /(?:^|\n)\s{0,3}#{1,4}\s*(?:uninstall|remove|cleanup|clean up|delete generated files)\b/i.test(
+    context,
+  );
+}
+
+function isScopedOpenClawDelete(line: string, slug?: string) {
+  if (!/\.openclaw\//.test(line)) return false;
+  if (/\/\.\.(?:\/|$)|\$\(|`/.test(line)) return false;
+  if (slug && !line.toLowerCase().includes(slug.toLowerCase())) return false;
+  return !/\/\.openclaw\/?\s*(?:["'`;|&)]|$)/.test(line);
 }
 
 function hasShellVariableValidation(content: string, variable: string, useIndex: number) {
@@ -488,13 +520,48 @@ function findDangerousChildProcessCall(content: string) {
 function findShellBase64FileUpload(content: string) {
   if (!/\bcurl\b/i.test(content) || !/\bbase64\b/i.test(content)) return null;
   if (!SHELL_NETWORK_UPLOAD_PATTERN.test(content)) return null;
+  if (!SHELL_BASE64_FILE_READ_PATTERN.test(content)) return null;
   return findFirstLine(content, SHELL_BASE64_FILE_READ_PATTERN);
 }
 
 function findPythonBase64FileUpload(content: string) {
   if (!/base64\.b64encode/i.test(content)) return null;
   if (!PYTHON_NETWORK_UPLOAD_PATTERN.test(content)) return null;
+  if (!PYTHON_BASE64_FILE_READ_PATTERN.test(content)) return null;
   return findFirstLine(content, PYTHON_BASE64_FILE_READ_PATTERN);
+}
+
+function findJsSensitiveFileNetworkSend(content: string) {
+  if (!JS_FILE_READ_PATTERN.test(content)) return null;
+  if (!JS_NETWORK_SEND_PATTERN.test(content)) return null;
+
+  if (SENSITIVE_FILE_READ_CONTEXT_PATTERN.test(content)) {
+    return findFirstLine(content, SENSITIVE_FILE_READ_CONTEXT_PATTERN);
+  }
+
+  const assignmentPattern =
+    /\b(?:const|let|var)\s+([A-Za-z_$][A-Za-z0-9_$]*)\s*=\s*(?:await\s+)?(?:[A-Za-z_$][A-Za-z0-9_$]*\.)?(?:readFileSync|readFile)\s*\(([^)]*)\)/g;
+  for (const match of content.matchAll(assignmentPattern)) {
+    const variableName = match[1] ?? "";
+    const readArgument = match[2] ?? "";
+    if (
+      !SENSITIVE_LOCAL_VALUE_NAME_PATTERN.test(variableName) &&
+      !SENSITIVE_LOCAL_VALUE_NAME_PATTERN.test(readArgument)
+    ) {
+      continue;
+    }
+
+    const afterRead = content.slice((match.index ?? 0) + match[0].length);
+    const variableSink = new RegExp(
+      String.raw`\b(?:fetch\s*\(|http\.request\s*\(|axios\b)[\s\S]{0,1600}\b${variableName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\b`,
+      "i",
+    );
+    if (!variableSink.test(afterRead)) continue;
+
+    return findLineAtIndex(content, match.index ?? 0);
+  }
+
+  return null;
 }
 
 function findUnsafeBrowserFileRender(content: string) {
@@ -503,6 +570,13 @@ function findUnsafeBrowserFileRender(content: string) {
   if (!SVG_HTML_INTERPOLATION_PATTERN.test(content)) return null;
   if (BROWSER_JS_DISABLED_PATTERN.test(content)) return null;
   return findFirstLine(content, FILE_URL_BROWSER_NAVIGATION_PATTERN);
+}
+
+function findStealthBrowserAbuse(content: string) {
+  if (!STEALTH_BROWSER_CONTEXT_PATTERN.test(content)) return null;
+  if (!BOT_PROTECTION_BYPASS_PATTERN.test(content)) return null;
+  if (!BROWSER_SESSION_PERSISTENCE_PATTERN.test(content)) return null;
+  return findFirstLine(content, STEALTH_BROWSER_CONTEXT_PATTERN);
 }
 
 function findUnsafeAgentControlledFileWrite(content: string) {
@@ -523,11 +597,16 @@ function findUnsafePythonRcloneFilename(content: string) {
   );
 }
 
-function findPythonCredentialPostToEnvUrl(content: string) {
+function findPythonCredentialPostToEnvUrl(content: string, declaredEnvNames: Set<string>) {
   if (!PYTHON_CREDENTIAL_ENV_PATTERN.test(content)) return null;
   if (!PYTHON_URL_ENV_PATTERN.test(content)) return null;
   if (!PYTHON_HTTP_POST_PATTERN.test(content)) return null;
   if (!PASSWORD_PAYLOAD_PATTERN.test(content)) return null;
+  const referencedEnvNames = collectReferencedEnvNames(content);
+  const accessesOnlyDeclaredEnvNames =
+    referencedEnvNames.size > 0 &&
+    [...referencedEnvNames].every((name) => declaredEnvNames.has(name));
+  if (accessesOnlyDeclaredEnvNames) return null;
   return findFirstLine(content, PYTHON_HTTP_POST_PATTERN);
 }
 
@@ -660,6 +739,8 @@ function collectReferencedEnvNames(content: string) {
   const patterns = [
     /process\.env\.([A-Za-z_][A-Za-z0-9_]*)/g,
     /process\.env\[\s*["']([A-Za-z_][A-Za-z0-9_]*)["']\s*\]/g,
+    /os\.environ(?:\.get)?\s*(?:\[\s*|\(\s*)["']([A-Za-z_][A-Za-z0-9_]*)["']/g,
+    /(?:os\.)?getenv\s*\(\s*["']([A-Za-z_][A-Za-z0-9_]*)["']/g,
   ];
 
   for (const pattern of patterns) {
@@ -748,6 +829,19 @@ function scanCodeFile(
     });
   }
 
+  const stealthBrowserAbuse = findStealthBrowserAbuse(content);
+  if (stealthBrowserAbuse) {
+    addFinding(findings, {
+      code: REASON_CODES.STEALTH_BROWSER_ABUSE,
+      severity: "critical",
+      file: path,
+      line: stealthBrowserAbuse.line,
+      message:
+        "Browser automation advertises stealth/anti-detection behavior with bot-protection bypass and persistent sessions.",
+      evidence: stealthBrowserAbuse.text,
+    });
+  }
+
   const unsafeAgentControlledFileWrite = findUnsafeAgentControlledFileWrite(content);
   if (unsafeAgentControlledFileWrite) {
     addFinding(findings, {
@@ -824,17 +918,15 @@ function scanCodeFile(
     }
   }
 
-  const hasFileRead = /readFileSync|readFile/.test(content);
-  const hasNetworkSend = /\bfetch\b|http\.request|\baxios\b/.test(content);
-  if (hasFileRead && hasNetworkSend) {
-    const match = findFirstLine(content, /readFileSync|readFile/);
+  const jsSensitiveFileNetworkSend = findJsSensitiveFileNetworkSend(content);
+  if (jsSensitiveFileNetworkSend) {
     addFinding(findings, {
       code: REASON_CODES.EXFILTRATION,
       severity: "warn",
       file: path,
-      line: match.line,
-      message: "File read combined with network send (possible exfiltration).",
-      evidence: match.text,
+      line: jsSensitiveFileNetworkSend.line,
+      message: "Sensitive-looking file read is paired with a network send.",
+      evidence: jsSensitiveFileNetworkSend.text,
     });
   }
 
@@ -862,7 +954,7 @@ function scanCodeFile(
     });
   }
 
-  const pythonCredentialPost = findPythonCredentialPostToEnvUrl(content);
+  const pythonCredentialPost = findPythonCredentialPostToEnvUrl(content, declaredEnvNames);
   if (pythonCredentialPost) {
     addFinding(findings, {
       code: REASON_CODES.CREDENTIAL_HARVEST,
@@ -889,7 +981,7 @@ function scanCodeFile(
   }
 
   const hasProcessEnv = /process\.env/.test(content);
-  if (hasProcessEnv && hasNetworkSend) {
+  if (hasProcessEnv && JS_NETWORK_SEND_PATTERN.test(content)) {
     const referencedEnvNames = collectReferencedEnvNames(content);
     const accessesOnlyDeclaredEnvNames =
       referencedEnvNames.size > 0 &&
@@ -925,7 +1017,12 @@ function scanCodeFile(
   }
 }
 
-function scanMarkdownFile(path: string, content: string, findings: ModerationFinding[]) {
+function scanMarkdownFile(
+  path: string,
+  content: string,
+  findings: ModerationFinding[],
+  slug: string,
+) {
   if (!MARKDOWN_EXTENSION.test(path)) return;
 
   const credentialExposure = findCredentialExposureInstruction(content);
@@ -977,6 +1074,19 @@ function scanMarkdownFile(path: string, content: string, findings: ModerationFin
     });
   }
 
+  const stealthBrowserAbuse = findStealthBrowserAbuse(content);
+  if (stealthBrowserAbuse) {
+    addFinding(findings, {
+      code: REASON_CODES.STEALTH_BROWSER_ABUSE,
+      severity: "critical",
+      file: path,
+      line: stealthBrowserAbuse.line,
+      message:
+        "Browser automation advertises stealth/anti-detection behavior with bot-protection bypass and persistent sessions.",
+      evidence: stealthBrowserAbuse.text,
+    });
+  }
+
   if (hasMaliciousInstallPrompt(content)) {
     const match = findFirstLine(
       content,
@@ -992,7 +1102,7 @@ function scanMarkdownFile(path: string, content: string, findings: ModerationFin
     });
   }
 
-  const destructiveDelete = findUnguardedDestructiveDelete(content);
+  const destructiveDelete = findUnguardedDestructiveDelete(content, slug);
   if (destructiveDelete) {
     addFinding(findings, {
       code: REASON_CODES.DESTRUCTIVE_DELETE_COMMAND,
@@ -1167,7 +1277,7 @@ export function runStaticModerationScan(input: StaticScanInput): StaticScanResul
     scanSecretLiteralFile(file.path, file.content, findings);
     scanPlaintextCgnatEndpointFile(file.path, file.content, findings);
     scanCodeFile(file.path, file.content, findings, declaredEnvNames);
-    scanMarkdownFile(file.path, file.content, findings);
+    scanMarkdownFile(file.path, file.content, findings, input.slug);
     scanManifestFile(file.path, file.content, findings);
   }
 

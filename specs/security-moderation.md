@@ -92,6 +92,12 @@ See also: [acceptable-usage.md](./acceptable-usage.md) for the marketplace polic
   - `moderationSummary`, engine version, evaluation timestamp, source version id
 - Structured moderation is rebuilt from current signals instead of appending stale scanner codes.
 - Legacy moderation flags remain in sync for existing public visibility and suspicious-skill filtering.
+- Static scan evidence must identify a concrete risky source/sink, not just adjacent primitives:
+  - declared provider credentials and declared provider base URLs are not credential-harvest findings by themselves.
+  - user-directed provider uploads are not exfiltration unless the source is broad/private/sensitive, automatic, or sent to an unrelated/hidden destination.
+  - Basic Auth/base64 credential encoding and provider-response base64 decoding are normal integration behavior.
+  - scoped uninstall cleanup under a skill-owned `.openclaw` path is not a destructive-delete finding unless it deletes a broad/protected path or hides impact.
+  - stealth/anti-detection browser automation becomes malicious only when paired with bot-protection bypass and persistent sessions.
 - Static malware detection now hard-blocks install prompts that tell users to paste obfuscated shell payloads
   (for example base64-decoded `curl|bash` terminal commands). When triggered:
   - the uploaded skill is hidden immediately
