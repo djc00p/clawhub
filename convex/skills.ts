@@ -9651,6 +9651,33 @@ export const setSkillSoftDeletedInternal = internalMutation({
       updatedAt: now,
     };
     if (note) patch.moderationNotes = note;
+    if (!args.deleted && isModeratorOrAdmin && note) {
+      const manualOverride = buildManualOverrideRecord({
+        note,
+        reviewerUserId: user._id,
+        updatedAt: now,
+      });
+      Object.assign(
+        patch,
+        applyManualOverrideToSkillPatch({
+          basePatch: {
+            ...patch,
+            moderationReasonCodes: undefined,
+            moderationEvidence: undefined,
+            moderationSummary: undefined,
+            moderationEngineVersion: undefined,
+            moderationEvaluatedAt: undefined,
+            moderationSourceVersionId: undefined,
+          },
+          override: manualOverride,
+          now,
+        }),
+        {
+          manualOverride,
+          moderationNotes: note,
+        },
+      );
+    }
     // Data hygiene: when the owner self-deletes (not a moderator/admin acting
     // via this internal entry point), reset any stale `moderationReason`
     // that may have survived from prior moderation metadata (e.g. an
@@ -9664,6 +9691,7 @@ export const setSkillSoftDeletedInternal = internalMutation({
     const nextSkill = { ...skill, ...patch };
     await ctx.db.patch(skill._id, patch);
     await adjustGlobalPublicCountForSkillChange(ctx, skill, nextSkill);
+    await adjustUserSkillStatsForSkillChange(ctx, skill, nextSkill);
 
     await setSkillEmbeddingsSoftDeleted(ctx, skill._id, args.deleted, now);
 
