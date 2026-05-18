@@ -7,11 +7,19 @@ import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
 import { Card } from "../components/ui/card";
 import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "../components/ui/select";
+import {
   getSkillBadges,
   isSkillDeprecated,
   isSkillHighlighted,
   isSkillOfficial,
 } from "../lib/badges";
+import { getUserFacingConvexError } from "../lib/convexError";
 import { familyLabel } from "../lib/packageLabels";
 import type { PublicPublisher } from "../lib/publicUser";
 import { isAdmin, isModerator } from "../lib/roles";
@@ -574,17 +582,18 @@ function Management() {
                         <>
                           <label className="management-control management-control-stack">
                             <span className="mono">owner</span>
-                            <select
-                              className="management-field"
-                              value={selectedOwner}
-                              onChange={(event) => setSelectedOwner(event.target.value)}
-                            >
-                              {filteredUsers.map((user) => (
-                                <option key={user._id} value={user._id}>
-                                  @{user.handle ?? user.name ?? "user"}
-                                </option>
-                              ))}
-                            </select>
+                            <Select value={selectedOwner} onValueChange={setSelectedOwner}>
+                              <SelectTrigger className="management-field">
+                                <SelectValue />
+                              </SelectTrigger>
+                              <SelectContent>
+                                {filteredUsers.map((user) => (
+                                  <SelectItem key={user._id} value={user._id}>
+                                    @{user.handle ?? user.name ?? "user"}
+                                  </SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
                           </label>
                           <div className="management-control management-control-stack">
                             <span className="mono">owner action</span>
@@ -983,19 +992,23 @@ function Management() {
                     ) : null}
                   </div>
                   <div className="management-actions">
-                    <select
+                    <Select
                       value={user.role ?? "user"}
-                      onChange={(event) => {
-                        const value = event.target.value;
+                      onValueChange={(value) => {
                         if (value === "admin" || value === "moderator" || value === "user") {
                           void setRole({ userId: user._id, role: value });
                         }
                       }}
                     >
-                      <option value="user">User</option>
-                      <option value="moderator">Moderator</option>
-                      <option value="admin">Admin</option>
-                    </select>
+                      <SelectTrigger size="sm" className="w-[130px]">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="user">User</SelectItem>
+                        <SelectItem value="moderator">Moderator</SelectItem>
+                        <SelectItem value="admin">Admin</SelectItem>
+                      </SelectContent>
+                    </Select>
                     <Button
                       type="button"
                       disabled={user._id === me?._id}
@@ -1052,10 +1065,7 @@ function formatTimestamp(value: number) {
 }
 
 function formatMutationError(error: unknown) {
-  if (error instanceof Error && error.message.trim()) {
-    return error.message.trim();
-  }
-  return "Request failed.";
+  return getUserFacingConvexError(error, "Request failed.");
 }
 
 function formatManualOverrideState(

@@ -1,8 +1,9 @@
 import { Link } from "@tanstack/react-router";
 import type { ReactNode } from "react";
+import type { PublicSkill } from "../lib/publicUser";
 import { MarketplaceIcon } from "./MarketplaceIcon";
 import { Badge } from "./ui/badge";
-import type { PublicSkill } from "../lib/publicUser";
+import { VerifiedBadge } from "./VerifiedBadge";
 
 type SkillCardProps = {
   skill: PublicSkill;
@@ -12,6 +13,7 @@ type SkillCardProps = {
   summaryFallback: string;
   meta: ReactNode;
   href?: string;
+  className?: string;
 };
 
 export function SkillCard({
@@ -22,6 +24,7 @@ export function SkillCard({
   summaryFallback,
   meta,
   href,
+  className,
 }: SkillCardProps) {
   const owner = encodeURIComponent(String(skill.ownerUserId));
   const link = href ?? `/${owner}/${skill.slug}`;
@@ -29,14 +32,16 @@ export function SkillCard({
   const hasTags = badges.length || chip || platformLabels?.length;
 
   return (
-    <Link to={link} className="card skill-card">
+    <Link to={link} className={["card skill-card", className].filter(Boolean).join(" ")}>
       {hasTags ? (
         <div className="skill-card-tags">
-          {badges.map((label) => (
-            <Badge key={label}>
-              {label}
-            </Badge>
-          ))}
+          {badges.map((label) =>
+            label === "Verified" ? (
+              <VerifiedBadge key={label} />
+            ) : (
+              <Badge key={label}>{label}</Badge>
+            ),
+          )}
           {chip ? <Badge variant="accent">{chip}</Badge> : null}
           {platformLabels?.map((label) => (
             <Badge key={label} variant="compact">
@@ -46,7 +51,7 @@ export function SkillCard({
         </div>
       ) : null}
       <div className="skill-card-header">
-        <MarketplaceIcon kind="skill" label={skill.displayName} size="md" />
+        <MarketplaceIcon kind="skill" label={skill.displayName} icon={skill.icon} size="md" />
         <h3 className="skill-card-title">{skill.displayName}</h3>
       </div>
       <p className="skill-card-summary">{skill.summary ?? summaryFallback}</p>

@@ -6,7 +6,7 @@ import { convexHttp } from "../convex/client";
 import { hasOwnProperty } from "../lib/hasOwnProperty";
 import { formatCompactStat } from "../lib/numberFormat";
 import type { PublicPublisher, PublicUser } from "../lib/publicUser";
-import { Tooltip, TooltipContent, TooltipTrigger } from "./ui/tooltip";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "./ui/tooltip";
 
 type UserBadgeProps = {
   user: PublicUser | PublicPublisher | null | undefined;
@@ -15,6 +15,8 @@ type UserBadgeProps = {
   size?: "sm" | "md";
   link?: boolean;
   showName?: boolean;
+  showHandle?: boolean;
+  disableTooltip?: boolean;
 };
 
 export function UserBadge({
@@ -24,38 +26,31 @@ export function UserBadge({
   size = "sm",
   link = true,
   showName = false,
+  showHandle = true,
+  disableTooltip = false,
 }: UserBadgeProps) {
-  const userName = hasOwnProperty(user, "name") && typeof user.name === "string"
-    ? user.name.trim()
-    : undefined;
+  const userName =
+    hasOwnProperty(user, "name") && typeof user.name === "string" ? user.name.trim() : undefined;
   const displayName = user?.displayName?.trim() || userName || null;
   const handle = user?.handle ?? fallbackHandle ?? null;
-  const href =
-    user?.handle && hasOwnProperty(user, "kind")
-      ? user.kind === "org"
-        ? `/orgs/${encodeURIComponent(user.handle)}`
-        : `/u/${encodeURIComponent(user.handle)}`
-      : user?.handle
-        ? `/u/${encodeURIComponent(user.handle)}`
-        : null;
+  const href = user?.handle ? `/user/${encodeURIComponent(user.handle)}` : null;
   const label = handle ? `@${handle}` : "user";
   const image = user?.image ?? null;
   const hasUsefulName =
     showName &&
     Boolean(displayName) &&
-    Boolean(handle) &&
-    displayName!.toLowerCase() !== handle!.toLowerCase();
+    (!showHandle || !handle || displayName!.toLowerCase() !== handle.toLowerCase());
   const initial = (displayName ?? handle ?? "u").charAt(0).toUpperCase();
 
   // Resolve userId for stats query — PublicUser has _id directly,
   // PublicPublisher has linkedUserId
   const userId =
     user && hasOwnProperty(user, "kind")
-      ? (user as PublicPublisher).linkedUserId ?? null
-      : user?._id ?? null;
+      ? ((user as PublicPublisher).linkedUserId ?? null)
+      : (user?._id ?? null);
 
-  const badge = (
-    <span className={`user-badge user-badge-${size}`}>
+  const badgeContent = (
+    <>
       {prefix ? <span className="user-badge-prefix">{prefix}</span> : null}
       <span className="user-avatar" aria-hidden="true">
         {image ? (
@@ -67,28 +62,41 @@ export function UserBadge({
       {hasUsefulName ? (
         <>
           <span className="user-name">{displayName}</span>
-          <span className="user-name-sep" aria-hidden="true">
-            ·
-          </span>
+          {showHandle ? (
+            <span className="user-name-sep" aria-hidden="true">
+              ·
+            </span>
+          ) : null}
         </>
       ) : null}
-      {link && href ? (
+      {showHandle && link && href ? (
         <a className="user-handle" href={href}>
           {label}
         </a>
-      ) : (
+      ) : showHandle ? (
         <span className="user-handle">{label}</span>
-      )}
-    </span>
+      ) : null}
+    </>
   );
 
-  if (!userId) return badge;
+  const badge =
+    !showHandle && link && href ? (
+      <a className={`user-badge user-badge-${size} user-badge-link`} href={href}>
+        {badgeContent}
+      </a>
+    ) : (
+      <span className={`user-badge user-badge-${size}`}>{badgeContent}</span>
+    );
+
+  if (!userId || disableTooltip) return badge;
 
   return (
-    <Tooltip>
-      <TooltipTrigger asChild>{badge}</TooltipTrigger>
-      <UserStatsTooltipContent userId={userId} displayName={displayName} handle={handle} />
-    </Tooltip>
+    <TooltipProvider delayDuration={400}>
+      <Tooltip>
+        <TooltipTrigger asChild>{badge}</TooltipTrigger>
+        <UserStatsTooltipContent userId={userId} displayName={displayName} handle={handle} />
+      </Tooltip>
+    </TooltipProvider>
   );
 }
 
@@ -128,24 +136,31 @@ function UserStatsTooltipContent({
             {displayName}
           </span>
         )}
-        {handle && (
-          <span className="text-fs-xs text-ink-soft">@{handle}</span>
-        )}
+        {handle && <span className="text-fs-xs text-ink-soft">@{handle}</span>}
       </div>
       <div className="border-t border-line flex items-center gap-space-3 px-3 py-2">
         {stats === null ? (
           <span className="text-fs-xs text-ink-soft">Loading...</span>
         ) : (
           <>
-            <span className="flex items-center gap-1 text-fs-xs text-ink-soft" title="Published skills">
+            <span
+              className="flex items-center gap-1 text-fs-xs text-ink-soft"
+              title="Published skills"
+            >
               <Package size={12} />
               {formatCompactStat(stats.publishedSkills)}
             </span>
-            <span className="flex items-center gap-1 text-fs-xs text-ink-soft" title="Stars received">
+            <span
+              className="flex items-center gap-1 text-fs-xs text-ink-soft"
+              title="Stars received"
+            >
               <Star size={12} />
               {formatCompactStat(stats.totalStars)}
             </span>
-            <span className="flex items-center gap-1 text-fs-xs text-ink-soft" title="Total downloads">
+            <span
+              className="flex items-center gap-1 text-fs-xs text-ink-soft"
+              title="Total downloads"
+            >
               <Download size={12} />
               {formatCompactStat(stats.totalDownloads)}
             </span>

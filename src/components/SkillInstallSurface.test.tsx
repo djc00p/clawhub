@@ -4,6 +4,7 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { SkillCommandLineCard, SkillInstallSurface } from "./SkillInstallSurface";
+import { TooltipProvider } from "./ui/tooltip";
 
 const writeTextMock = vi.fn();
 
@@ -11,13 +12,7 @@ vi.mock("./ui/dropdown-menu", () => ({
   DropdownMenu: ({ children }: { children: ReactNode }) => <div>{children}</div>,
   DropdownMenuTrigger: ({ children }: { children: ReactNode }) => <div>{children}</div>,
   DropdownMenuContent: ({ children }: { children: ReactNode }) => <div>{children}</div>,
-  DropdownMenuItem: ({
-    children,
-    onSelect,
-  }: {
-    children: ReactNode;
-    onSelect?: () => void;
-  }) => (
+  DropdownMenuItem: ({ children, onSelect }: { children: ReactNode; onSelect?: () => void }) => (
     <button type="button" onClick={() => onSelect?.()}>
       {children}
     </button>
@@ -58,7 +53,7 @@ describe("SkillInstallSurface", () => {
 
     expect(screen.getByRole("heading", { name: "Install with OpenClaw" })).toBeTruthy();
     expect(screen.queryByRole("heading", { name: "CLI Commands" })).toBeNull();
-    expect(screen.getByText(/After install, inspect the skill metadata/i)).toBeTruthy();
+    expect(screen.getByText(/Before installing anything/i)).toBeTruthy();
     expect(screen.getAllByText("Install & Setup").length).toBeGreaterThan(0);
 
     fireEvent.click(screen.getByRole("button", { name: /Install Only/i }));
@@ -74,20 +69,20 @@ describe("SkillInstallSurface", () => {
 
   it("defaults to CLI install and can copy the compact prompt tab", async () => {
     render(
-      <SkillCommandLineCard
-        slug="weather"
-        displayName="Weather"
-        ownerHandle="steipete"
-        ownerId={ownerPublisherId}
-      />,
+      <TooltipProvider>
+        <SkillCommandLineCard
+          slug="weather"
+          displayName="Weather"
+          ownerHandle="steipete"
+          ownerId={ownerPublisherId}
+        />
+      </TooltipProvider>,
     );
 
     expect(screen.getByText("openclaw skills install weather")).toBeTruthy();
     expect(screen.queryByText("npx clawhub@latest install weather")).toBeNull();
     expect(screen.getByRole("tab", { name: "CLI" }).getAttribute("aria-selected")).toBe("true");
-    expect(screen.getByRole("tab", { name: "Prompt" }).getAttribute("aria-selected")).toBe(
-      "false",
-    );
+    expect(screen.getByRole("tab", { name: "Prompt" }).getAttribute("aria-selected")).toBe("false");
 
     fireEvent.click(screen.getByRole("button", { name: "Copy OpenClaw CLI command" }));
 
@@ -98,15 +93,13 @@ describe("SkillInstallSurface", () => {
     fireEvent.click(screen.getByRole("tab", { name: "Prompt" }));
 
     expect(screen.getByText(/Install the skill "Weather"/i)).toBeTruthy();
-    expect(screen.getByRole("tab", { name: "Prompt" }).getAttribute("aria-selected")).toBe(
-      "true",
-    );
+    expect(screen.getByRole("tab", { name: "Prompt" }).getAttribute("aria-selected")).toBe("true");
 
     fireEvent.click(screen.getByRole("button", { name: "Copy OpenClaw prompt" }));
 
     await waitFor(() => {
       expect(writeTextMock).toHaveBeenCalledWith(
-        expect.stringContaining("After install, inspect the skill metadata"),
+        expect.stringContaining("Before installing anything"),
       );
     });
   });

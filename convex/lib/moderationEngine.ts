@@ -1,6 +1,5 @@
 import type { Doc, Id } from "../_generated/dataModel";
 import {
-  isExternallyClearableSuspiciousCode,
   legacyFlagsFromVerdict,
   MODERATION_ENGINE_VERSION,
   normalizeReasonCodes,
@@ -28,6 +27,23 @@ type VirusTotalAnalysis = {
   metadata?: {
     stats?: VirusTotalEngineStats;
   };
+};
+
+type LlmRiskFinding = {
+  status?: string;
+  severity?: string;
+};
+
+type LlmRiskSummaryBucket = {
+  status?: string;
+  highestSeverity?: string;
+};
+
+type LlmAnalysis = {
+  status?: string;
+  verdict?: string;
+  agenticRiskFindings?: LlmRiskFinding[];
+  riskSummary?: Record<string, LlmRiskSummaryBucket | undefined>;
 };
 
 export type StaticScanInput = {
@@ -110,17 +126,26 @@ const SECRET_FLAG_ARGV_PATTERN =
 const SECRET_ARGV_REDACTION_PATTERN =
   /(\b(?:from-mnemonic|--(?:private-key|seed|seed-phrase|mnemonic|password|token))\s+)(["'`])([^"'`]{8,})\2/gi;
 const DYNAMIC_CODE_EXECUTION_PATTERN =
-  /\beval\s*\(|new\s+Function\s*\(|\b(?:[A-Za-z_][A-Za-z0-9_]*\.)?loader\.exec_module\s*\(/;
+  /(?<![\w$.])eval\s*\(|new\s+Function\s*\(|\b(?:[A-Za-z_][A-Za-z0-9_]*\.)?loader\.exec_module\s*\(/g;
 const SHELL_BASE64_FILE_READ_PATTERN =
-  /(?:\bcat\s+["']?\$[A-Za-z_][A-Za-z0-9_]*["']?\s*\|\s*base64\b|\bbase64\b[^\n]{0,80}["']?\$[A-Za-z_][A-Za-z0-9_]*["']?)/i;
+  /(?:\bcat\s+["']?\$[A-Za-z_][A-Za-z0-9_]*(?:file|path|input|image|document|pdf)[A-Za-z0-9_]*["']?\s*\|\s*base64\b|\bbase64\b[^\n]{0,80}["']?\$[A-Za-z_][A-Za-z0-9_]*(?:file|path|input|image|document|pdf)[A-Za-z0-9_]*["']?)/i;
 const SHELL_NETWORK_UPLOAD_PATTERN =
   /\bcurl\b[\s\S]{0,1600}(?:--data(?:-binary|-raw)?\b|-d\b|--form\b|-F\b|--upload-file\b|Authorization\s*:)/i;
+const PYTHON_BASE64_FILE_READ_PATTERN =
+  /base64\.b64encode\s*\(\s*(?:[A-Za-z_][A-Za-z0-9_]*\.read_bytes\s*\(\s*\)|Path\s*\([^)]*\)\.read_bytes\s*\(\s*\)|open\s*\([^)]*["']rb["'][\s\S]{0,120}\.read\s*\(\s*\))/i;
+const PYTHON_NETWORK_UPLOAD_PATTERN =
+  /\b(?:requests|session|self\.session|client|httpx\.(?:post|request))\.post\s*\([\s\S]{0,1600}(?:json\s*=|data\s*=|files\s*=|headers\s*=|Authorization)/i;
 const PLAYWRIGHT_CHROMIUM_PATTERN = /\b(?:playwright\.)?chromium\.launch\s*\(/i;
 const FILE_URL_BROWSER_NAVIGATION_PATTERN = /\bpage\.goto\s*\([^)]*file:\/\//i;
 const SVG_HTML_INTERPOLATION_PATTERN =
   /(?:<body>[\s\S]{0,240}\$\{[^}]*svg[^}]*\}|writeFile(?:Sync)?\s*\([^)]*\.html[^)]*\$\{[^}]*svg[^}]*\}|\$\{[^}]*svg[^}]*\}[\s\S]{0,240}<\/body>)/i;
 const BROWSER_JS_DISABLED_PATTERN =
   /javaScriptEnabled\s*:\s*false|Content-Security-Policy|script-src\s+['"]?none/i;
+const STEALTH_BROWSER_CONTEXT_PATTERN =
+  /\b(?:stealth|anti[-\s]?detect|undetected|fingerprint spoof|navigator\.webdriver)\b/i;
+const BOT_PROTECTION_BYPASS_PATTERN = /\b(?:captcha|cloudflare|turnstile|bot detection|waf)\b/i;
+const BROWSER_SESSION_PERSISTENCE_PATTERN =
+  /\b(?:persistent_context|userDataDir|storageState|session persistence|persist(?:ed)? cookies?)\b/i;
 const AGENT_OUTPUT_DIR_ARGUMENT_PATTERN =
   /add_argument\s*\(\s*["']--outdir["']|args\.outdir|output_path\s*=\s*Path\s*\(\s*args\.outdir\s*\)/i;
 const FFMPEG_FORCE_OUTPUT_PATTERN =
@@ -142,6 +167,12 @@ const PYTHON_URL_ENV_PATTERN =
 const PYTHON_HTTP_POST_PATTERN =
   /\b(?:requests|session|self\.session|client)\.post\s*\(|\.post\s*\(/i;
 const PASSWORD_PAYLOAD_PATTERN = /["']password["']\s*:|password\s*=/i;
+const JS_FILE_READ_PATTERN = /\b(?:readFileSync|readFile)\s*\(/;
+const JS_NETWORK_SEND_PATTERN = /\bfetch\s*\(|http\.request\s*\(|\baxios\b/;
+const SENSITIVE_FILE_READ_CONTEXT_PATTERN =
+  /(?:readFileSync|readFile)\s*\([^)]*(?:secret|token|credential|password|passwd|private[-_]?key|\.env\b|\.ssh\/|\.aws\/|\.config\/|keychain|cookies?|session|auth|\/etc\/|\/Library\/|\/Users\/[^/\s"'`]+\/Library\/Application Support)/i;
+const SENSITIVE_LOCAL_VALUE_NAME_PATTERN =
+  /(?:secret|token|credential|password|passwd|privateKey|private_key|apiKey|api_key|session|cookie|auth)/i;
 const AUTONOMOUS_AGENT_SCHEDULE_PATTERN =
   /\bAUTO_ANSWER\s*=\s*(?:true|os\.getenv\s*\(\s*["']AUTO_ANSWER["']\s*,\s*["']true["'])|while\s+True\s*:|time\.sleep\s*\(\s*(?:[3-9]\d{2,}|[1-9]\d{3,})\s*\)|\binterval\s*=\s*(?:[3-9]\d{2,}|[1-9]\d{3,})|"kind"\s*:\s*"cron"|"expr"\s*:\s*["'][^"']*\*\/(?:[1-5]?\d)\b/is;
 const CREDENTIAL_BEARING_AGENT_PATTERN =
@@ -161,6 +192,13 @@ const MUTABLE_RECIPE_STORE_PATTERN =
   /\b(?:error-patterns\.json|recipes?\.json|safe_auto|fix_recipe_id|["']command["'])\b/i;
 const TEMPLATED_SUBPROCESS_EXECUTION_PATTERN =
   /\bsubstitute_params\s*\([\s\S]{0,500}\b(?:shlex\.split|subprocess\.run)\b|\b(?:shlex\.split|subprocess\.run)\b[\s\S]{0,500}\bsubstitute_params\s*\(/i;
+const CONFIRMATION_BYPASS_TRIGGER_PATTERN =
+  /\b(?:OPENCLAW_AGENT_CALL|SAFE_EXEC_AUTO_CONFIRM|SAFEXEC_CONTEXT|I understand the risk)\b/i;
+const RISK_CONFIRMATION_CONTEXT_PATTERN =
+  /\b(?:critical|high|medium|risk|approval|approve|confirm|confirmation|read\s+-p)\b/i;
+const DIRECT_COMMAND_EVAL_PATTERN = /\beval\s+["']?\$command\b/i;
+const HIGH_RISK_CONTEXT_EVAL_PATTERN =
+  /\b(?:critical|high|medium)\b[\s\S]{0,900}\beval\s+["']?\$command\b|\bI understand the risk\b[\s\S]{0,1200}\beval\s+["']?\$command\b/i;
 
 function hasMaliciousInstallPrompt(content: string) {
   const hasTerminalInstruction =
@@ -329,14 +367,38 @@ function hasNearbyConfirmationGate(lines: string[], commandIndex: number) {
   ].some((pattern) => pattern.test(context));
 }
 
-function findUnguardedDestructiveDelete(content: string) {
+function findUnguardedDestructiveDelete(content: string, slug?: string) {
   const lines = content.split("\n");
   for (let i = 0; i < lines.length; i += 1) {
     if (!DESTRUCTIVE_DELETE_PATTERN.test(lines[i])) continue;
     if (hasNearbyConfirmationGate(lines, i)) continue;
+    if (
+      hasNearbyUninstallCleanupContext(lines, i) &&
+      isScopedOpenClawDelete(lines[i] ?? "", slug)
+    ) {
+      continue;
+    }
     return { line: i + 1, text: lines[i] };
   }
   return null;
+}
+
+function hasNearbyUninstallCleanupContext(lines: string[], commandIndex: number) {
+  const start = Math.max(0, commandIndex - 10);
+  const context = lines.slice(start, commandIndex + 1).join("\n");
+  return /(?:^|\n)\s{0,3}#{1,4}\s*(?:uninstall|remove|cleanup|clean up|delete generated files)\b/i.test(
+    context,
+  );
+}
+
+function isScopedOpenClawDelete(line: string, slug?: string) {
+  if (!/\.openclaw\//.test(line)) return false;
+  if (/\/\.\.(?:\/|$)|\$\(|`/.test(line)) return false;
+  if (slug && line.toLowerCase().includes(slug.toLowerCase())) return true;
+  if (/\.openclaw\/(?:config|cache|logs|data|tmp|state)\/[^/\s"'`;|&)]+/i.test(line)) {
+    return true;
+  }
+  return false;
 }
 
 function hasShellVariableValidation(content: string, variable: string, useIndex: number) {
@@ -441,12 +503,15 @@ function findCallEnd(content: string, openParenIndex: number) {
   return content.length;
 }
 
-function isSafeLiteralExecFileCall(callText: string) {
-  const match = callText.match(/\b(execFile|execFileSync)\s*\(\s*(["'])([^"']+)\2\s*,\s*\[/);
+function isSafeLiteralChildProcessCall(callName: string, callText: string) {
+  if (!["execFile", "execFileSync", "spawn", "spawnSync"].includes(callName)) return false;
+  const match = callText.match(
+    /\b(?:execFile|execFileSync|spawn|spawnSync)\s*\(\s*(["'])([^"']+)\1\s*,\s*\[/,
+  );
   if (!match) return false;
   if (/\bshell\s*:\s*true\b/.test(callText)) return false;
 
-  const executable = match[3]?.trim().toLowerCase();
+  const executable = match[2]?.trim().toLowerCase();
   if (!executable) return false;
   const basename = executable.split(/[\\/]/).at(-1) ?? executable;
   return !/^(?:sh|bash|zsh|fish|cmd|powershell|pwsh)$/.test(basename);
@@ -461,11 +526,16 @@ function findDangerousChildProcessCall(content: string) {
     const callIndex = match.index;
     if (callIndex === undefined || !callName) continue;
 
-    if (callName === "execFile" || callName === "execFileSync") {
+    if (
+      callName === "execFile" ||
+      callName === "execFileSync" ||
+      callName === "spawn" ||
+      callName === "spawnSync"
+    ) {
       const openParenIndex = content.indexOf("(", callIndex);
       const callEnd = findCallEnd(content, openParenIndex);
       const callText = content.slice(callIndex, callEnd);
-      if (isSafeLiteralExecFileCall(callText)) continue;
+      if (isSafeLiteralChildProcessCall(callName, callText)) continue;
     }
 
     return findLineAtIndex(content, callIndex);
@@ -474,10 +544,62 @@ function findDangerousChildProcessCall(content: string) {
   return null;
 }
 
+function findDynamicCodeExecution(content: string) {
+  DYNAMIC_CODE_EXECUTION_PATTERN.lastIndex = 0;
+  for (const match of content.matchAll(DYNAMIC_CODE_EXECUTION_PATTERN)) {
+    const index = match.index ?? 0;
+    const line = findLineAtIndex(content, index);
+    if (/\bunsafe-eval\b/i.test(line.text)) continue;
+    return line;
+  }
+  return null;
+}
+
 function findShellBase64FileUpload(content: string) {
   if (!/\bcurl\b/i.test(content) || !/\bbase64\b/i.test(content)) return null;
   if (!SHELL_NETWORK_UPLOAD_PATTERN.test(content)) return null;
+  if (!SHELL_BASE64_FILE_READ_PATTERN.test(content)) return null;
   return findFirstLine(content, SHELL_BASE64_FILE_READ_PATTERN);
+}
+
+function findPythonBase64FileUpload(content: string) {
+  if (!/base64\.b64encode/i.test(content)) return null;
+  if (!PYTHON_NETWORK_UPLOAD_PATTERN.test(content)) return null;
+  if (!PYTHON_BASE64_FILE_READ_PATTERN.test(content)) return null;
+  return findFirstLine(content, PYTHON_BASE64_FILE_READ_PATTERN);
+}
+
+function findJsSensitiveFileNetworkSend(content: string) {
+  if (!JS_FILE_READ_PATTERN.test(content)) return null;
+  if (!JS_NETWORK_SEND_PATTERN.test(content)) return null;
+
+  if (SENSITIVE_FILE_READ_CONTEXT_PATTERN.test(content)) {
+    return findFirstLine(content, SENSITIVE_FILE_READ_CONTEXT_PATTERN);
+  }
+
+  const assignmentPattern =
+    /\b(?:const|let|var)\s+([A-Za-z_$][A-Za-z0-9_$]*)\s*=\s*(?:await\s+)?(?:[A-Za-z_$][A-Za-z0-9_$]*\.)?(?:readFileSync|readFile)\s*\(([^)]*)\)/g;
+  for (const match of content.matchAll(assignmentPattern)) {
+    const variableName = match[1] ?? "";
+    const readArgument = match[2] ?? "";
+    if (
+      !SENSITIVE_LOCAL_VALUE_NAME_PATTERN.test(variableName) &&
+      !SENSITIVE_LOCAL_VALUE_NAME_PATTERN.test(readArgument)
+    ) {
+      continue;
+    }
+
+    const afterRead = content.slice((match.index ?? 0) + match[0].length);
+    const variableSink = new RegExp(
+      String.raw`\b(?:fetch\s*\(|http\.request\s*\(|axios\b)[\s\S]{0,1600}\b${variableName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\b`,
+      "i",
+    );
+    if (!variableSink.test(afterRead)) continue;
+
+    return findLineAtIndex(content, match.index ?? 0);
+  }
+
+  return null;
 }
 
 function findUnsafeBrowserFileRender(content: string) {
@@ -486,6 +608,13 @@ function findUnsafeBrowserFileRender(content: string) {
   if (!SVG_HTML_INTERPOLATION_PATTERN.test(content)) return null;
   if (BROWSER_JS_DISABLED_PATTERN.test(content)) return null;
   return findFirstLine(content, FILE_URL_BROWSER_NAVIGATION_PATTERN);
+}
+
+function findStealthBrowserAbuse(content: string) {
+  if (!STEALTH_BROWSER_CONTEXT_PATTERN.test(content)) return null;
+  if (!BOT_PROTECTION_BYPASS_PATTERN.test(content)) return null;
+  if (!BROWSER_SESSION_PERSISTENCE_PATTERN.test(content)) return null;
+  return findFirstLine(content, STEALTH_BROWSER_CONTEXT_PATTERN);
 }
 
 function findUnsafeAgentControlledFileWrite(content: string) {
@@ -506,11 +635,16 @@ function findUnsafePythonRcloneFilename(content: string) {
   );
 }
 
-function findPythonCredentialPostToEnvUrl(content: string) {
+function findPythonCredentialPostToEnvUrl(content: string, declaredEnvNames: Set<string>) {
   if (!PYTHON_CREDENTIAL_ENV_PATTERN.test(content)) return null;
   if (!PYTHON_URL_ENV_PATTERN.test(content)) return null;
   if (!PYTHON_HTTP_POST_PATTERN.test(content)) return null;
   if (!PASSWORD_PAYLOAD_PATTERN.test(content)) return null;
+  const referencedEnvNames = collectReferencedEnvNames(content);
+  const accessesOnlyDeclaredEnvNames =
+    referencedEnvNames.size > 0 &&
+    [...referencedEnvNames].every((name) => declaredEnvNames.has(name));
+  if (accessesOnlyDeclaredEnvNames) return null;
   return findFirstLine(content, PYTHON_HTTP_POST_PATTERN);
 }
 
@@ -557,6 +691,17 @@ function findHardcodedOperatorBillingEndpoint(content: string) {
   if (!LIGHTNING_BILLING_FLOW_PATTERN.test(content)) return null;
   if (!OUTBOUND_POST_PATTERN.test(content)) return null;
   return findFirstLine(content, HARDCODED_OPERATOR_BASE_URL_PATTERN);
+}
+
+function findConfirmationBypass(content: string) {
+  if (!CONFIRMATION_BYPASS_TRIGGER_PATTERN.test(content)) return null;
+  if (!RISK_CONFIRMATION_CONTEXT_PATTERN.test(content)) return null;
+  if (!DIRECT_COMMAND_EVAL_PATTERN.test(content)) return null;
+  if (!HIGH_RISK_CONTEXT_EVAL_PATTERN.test(content)) return null;
+  return findFirstLine(
+    content,
+    /SAFEXEC_CONTEXT|I understand the risk|OPENCLAW_AGENT_CALL|SAFE_EXEC_AUTO_CONFIRM|eval\s+["']?\$command/,
+  );
 }
 
 function normalizeEnvName(value: unknown) {
@@ -632,6 +777,8 @@ function collectReferencedEnvNames(content: string) {
   const patterns = [
     /process\.env\.([A-Za-z_][A-Za-z0-9_]*)/g,
     /process\.env\[\s*["']([A-Za-z_][A-Za-z0-9_]*)["']\s*\]/g,
+    /os\.environ(?:\.get)?\s*(?:\[\s*|\(\s*)["']([A-Za-z_][A-Za-z0-9_]*)["']/g,
+    /(?:os\.)?getenv\s*\(\s*["']([A-Za-z_][A-Za-z0-9_]*)["']/g,
   ];
 
   for (const pattern of patterns) {
@@ -648,6 +795,12 @@ function hasBroadEnvAccess(content: string) {
     /Object\.(?:keys|values|entries)\s*\(\s*process\.env\s*\)/.test(content) ||
     /process\.env(?!\s*(?:\.|\[))/.test(content) ||
     /process\.env\[\s*[^"'`\]]/.test(content)
+  );
+}
+
+function envNameLooksCredential(name: string) {
+  return /(?:^|_)(?:API_)?(?:KEY|TOKEN|SECRET|PASSWORD|PASS|PAT|PRIVATE_KEY|ACCESS_TOKEN|AUTH_TOKEN|SERVICE_ROLE)(?:_|$)/i.test(
+    name,
   );
 }
 
@@ -671,15 +824,15 @@ function scanCodeFile(
     });
   }
 
-  if (DYNAMIC_CODE_EXECUTION_PATTERN.test(content)) {
-    const match = findFirstLine(content, DYNAMIC_CODE_EXECUTION_PATTERN);
+  const dynamicCodeExecution = findDynamicCodeExecution(content);
+  if (dynamicCodeExecution) {
     addFinding(findings, {
       code: REASON_CODES.DYNAMIC_CODE,
       severity: "critical",
       file: path,
-      line: match.line,
+      line: dynamicCodeExecution.line,
       message: "Dynamic code execution detected.",
-      evidence: match.text,
+      evidence: dynamicCodeExecution.text,
     });
   }
 
@@ -720,6 +873,19 @@ function scanCodeFile(
     });
   }
 
+  const stealthBrowserAbuse = findStealthBrowserAbuse(content);
+  if (stealthBrowserAbuse) {
+    addFinding(findings, {
+      code: REASON_CODES.STEALTH_BROWSER_ABUSE,
+      severity: "critical",
+      file: path,
+      line: stealthBrowserAbuse.line,
+      message:
+        "Browser automation advertises stealth/anti-detection behavior with bot-protection bypass and persistent sessions.",
+      evidence: stealthBrowserAbuse.text,
+    });
+  }
+
   const unsafeAgentControlledFileWrite = findUnsafeAgentControlledFileWrite(content);
   if (unsafeAgentControlledFileWrite) {
     addFinding(findings, {
@@ -756,6 +922,18 @@ function scanCodeFile(
     });
   }
 
+  const confirmationBypass = findConfirmationBypass(content);
+  if (confirmationBypass) {
+    addFinding(findings, {
+      code: REASON_CODES.CONFIRMATION_BYPASS,
+      severity: "critical",
+      file: path,
+      line: confirmationBypass.line,
+      message: "Risky command approval can be bypassed through environment or context signals.",
+      evidence: confirmationBypass.text,
+    });
+  }
+
   if (/stratum\+tcp|stratum\+ssl|coinhive|cryptonight|xmrig/i.test(content)) {
     const match = findFirstLine(content, /stratum\+tcp|stratum\+ssl|coinhive|cryptonight|xmrig/i);
     addFinding(findings, {
@@ -784,17 +962,15 @@ function scanCodeFile(
     }
   }
 
-  const hasFileRead = /readFileSync|readFile/.test(content);
-  const hasNetworkSend = /\bfetch\b|http\.request|\baxios\b/.test(content);
-  if (hasFileRead && hasNetworkSend) {
-    const match = findFirstLine(content, /readFileSync|readFile/);
+  const jsSensitiveFileNetworkSend = findJsSensitiveFileNetworkSend(content);
+  if (jsSensitiveFileNetworkSend) {
     addFinding(findings, {
       code: REASON_CODES.EXFILTRATION,
       severity: "warn",
       file: path,
-      line: match.line,
-      message: "File read combined with network send (possible exfiltration).",
-      evidence: match.text,
+      line: jsSensitiveFileNetworkSend.line,
+      message: "Sensitive-looking file read is paired with a network send.",
+      evidence: jsSensitiveFileNetworkSend.text,
     });
   }
 
@@ -810,7 +986,19 @@ function scanCodeFile(
     });
   }
 
-  const pythonCredentialPost = findPythonCredentialPostToEnvUrl(content);
+  const pythonBase64FileUpload = findPythonBase64FileUpload(content);
+  if (pythonBase64FileUpload) {
+    addFinding(findings, {
+      code: REASON_CODES.EXFILTRATION,
+      severity: "critical",
+      file: path,
+      line: pythonBase64FileUpload.line,
+      message: "Python code base64-encodes a local file and sends it over the network.",
+      evidence: pythonBase64FileUpload.text,
+    });
+  }
+
+  const pythonCredentialPost = findPythonCredentialPostToEnvUrl(content, declaredEnvNames);
   if (pythonCredentialPost) {
     addFinding(findings, {
       code: REASON_CODES.CREDENTIAL_HARVEST,
@@ -837,14 +1025,18 @@ function scanCodeFile(
   }
 
   const hasProcessEnv = /process\.env/.test(content);
-  if (hasProcessEnv && hasNetworkSend) {
+  if (hasProcessEnv && JS_NETWORK_SEND_PATTERN.test(content)) {
     const referencedEnvNames = collectReferencedEnvNames(content);
+    const referencesCredentialEnvName = [...referencedEnvNames].some(envNameLooksCredential);
     const accessesOnlyDeclaredEnvNames =
       referencedEnvNames.size > 0 &&
       [...referencedEnvNames].every((name) => declaredEnvNames.has(name)) &&
       !hasBroadEnvAccess(content);
 
-    if (!accessesOnlyDeclaredEnvNames) {
+    if (
+      !accessesOnlyDeclaredEnvNames &&
+      (hasBroadEnvAccess(content) || referencesCredentialEnvName)
+    ) {
       const match = findFirstLine(content, /process\.env/);
       addFinding(findings, {
         code: REASON_CODES.CREDENTIAL_HARVEST,
@@ -873,7 +1065,12 @@ function scanCodeFile(
   }
 }
 
-function scanMarkdownFile(path: string, content: string, findings: ModerationFinding[]) {
+function scanMarkdownFile(
+  path: string,
+  content: string,
+  findings: ModerationFinding[],
+  slug: string,
+) {
   if (!MARKDOWN_EXTENSION.test(path)) return;
 
   const credentialExposure = findCredentialExposureInstruction(content);
@@ -925,6 +1122,19 @@ function scanMarkdownFile(path: string, content: string, findings: ModerationFin
     });
   }
 
+  const stealthBrowserAbuse = findStealthBrowserAbuse(content);
+  if (stealthBrowserAbuse) {
+    addFinding(findings, {
+      code: REASON_CODES.STEALTH_BROWSER_ABUSE,
+      severity: "critical",
+      file: path,
+      line: stealthBrowserAbuse.line,
+      message:
+        "Browser automation advertises stealth/anti-detection behavior with bot-protection bypass and persistent sessions.",
+      evidence: stealthBrowserAbuse.text,
+    });
+  }
+
   if (hasMaliciousInstallPrompt(content)) {
     const match = findFirstLine(
       content,
@@ -940,7 +1150,7 @@ function scanMarkdownFile(path: string, content: string, findings: ModerationFin
     });
   }
 
-  const destructiveDelete = findUnguardedDestructiveDelete(content);
+  const destructiveDelete = findUnguardedDestructiveDelete(content, slug);
   if (destructiveDelete) {
     addFinding(findings, {
       code: REASON_CODES.DESTRUCTIVE_DELETE_COMMAND,
@@ -1066,44 +1276,61 @@ function dedupeEvidence(evidence: ModerationFinding[]) {
   return out.slice(0, 40);
 }
 
-function isStaticScanClean(staticScan: StaticScanResult | undefined) {
-  // Older moderation records can predate static scan persistence; absence means
-  // there are no static findings available to corroborate an external signal.
-  return !staticScan || staticScan.reasonCodes.length === 0 || staticScan.status === "clean";
+function normalizedSeverityRank(severity: string | undefined) {
+  switch (severity?.trim().toLowerCase()) {
+    case "critical":
+      return 5;
+    case "high":
+      return 4;
+    case "medium":
+      return 3;
+    case "low":
+      return 2;
+    case "info":
+      return 1;
+    default:
+      return 0;
+  }
 }
 
-function isAvEngineStatsClean(stats: VirusTotalEngineStats | undefined) {
-  if (!stats) return false;
-  return (stats.malicious ?? 0) === 0 && (stats.suspicious ?? 0) === 0;
+function highestLlmConcernSeverityRank(analysis: LlmAnalysis | undefined) {
+  let rank = 0;
+  for (const finding of analysis?.agenticRiskFindings ?? []) {
+    if (finding.status !== "concern") continue;
+    rank = Math.max(rank, normalizedSeverityRank(finding.severity));
+  }
+  for (const bucket of Object.values(analysis?.riskSummary ?? {})) {
+    if (bucket?.status !== "concern") continue;
+    rank = Math.max(rank, normalizedSeverityRank(bucket.highestSeverity));
+  }
+  return rank;
 }
 
-function getVtEngineStats(analysis: VirusTotalAnalysis | undefined) {
-  return analysis?.engineStats ?? analysis?.metadata?.stats;
-}
-
-function isUncorroboratedVtCodeInsightSuspicious(params: {
-  vtAnalysis?: VirusTotalAnalysis;
-  staticScan?: StaticScanResult;
-  llmStatus?: string;
-}) {
-  if (params.vtAnalysis?.scanner !== "code_insight") return false;
-  if (!isExternalScannerClean(params.llmStatus)) return false;
-  if (!isStaticScanClean(params.staticScan)) return false;
-  return isAvEngineStatsClean(getVtEngineStats(params.vtAnalysis));
-}
-
-function addScannerStatusReason(
-  reasonCodes: string[],
-  scanner: "vt" | "llm",
-  status?: string,
-  options: { suppressSuspicious?: boolean } = {},
-) {
+function addLlmStatusReason(reasonCodes: string[], status?: string, analysis?: LlmAnalysis) {
   const normalized = status?.trim().toLowerCase();
   if (normalized === "malicious") {
-    reasonCodes.push(`malicious.${scanner}_malicious`);
-  } else if (normalized === "suspicious" && !options.suppressSuspicious) {
-    reasonCodes.push(`suspicious.${scanner}_suspicious`);
+    reasonCodes.push("malicious.llm_malicious");
+    return;
   }
+  if (normalized !== "suspicious") return;
+
+  const concernRank = highestLlmConcernSeverityRank(analysis);
+  if (concernRank >= normalizedSeverityRank("high")) {
+    reasonCodes.push("suspicious.llm_suspicious");
+  } else {
+    reasonCodes.push(REASON_CODES.LLM_REVIEW);
+  }
+}
+
+function completedCodexStatus(status?: string, analysis?: LlmAnalysis) {
+  const normalized = status?.trim().toLowerCase();
+  if (normalized === "clean" || normalized === "suspicious" || normalized === "malicious") {
+    return normalized;
+  }
+  const verdict = analysis?.verdict?.trim().toLowerCase();
+  if (verdict === "benign") return "clean";
+  if (verdict === "suspicious" || verdict === "malicious") return verdict;
+  return undefined;
 }
 
 export function runStaticModerationScan(input: StaticScanInput): StaticScanResult {
@@ -1115,7 +1342,7 @@ export function runStaticModerationScan(input: StaticScanInput): StaticScanResul
     scanSecretLiteralFile(file.path, file.content, findings);
     scanPlaintextCgnatEndpointFile(file.path, file.content, findings);
     scanCodeFile(file.path, file.content, findings, declaredEnvNames);
-    scanMarkdownFile(file.path, file.content, findings);
+    scanMarkdownFile(file.path, file.content, findings, input.slug);
     scanManifestFile(file.path, file.content, findings);
   }
 
@@ -1198,40 +1425,23 @@ export function runStaticModerationScan(input: StaticScanInput): StaticScanResul
   };
 }
 
-function isExternalScannerClean(status: string | undefined): boolean {
-  const normalized = status?.trim().toLowerCase();
-  return normalized === "clean" || normalized === "benign";
-}
-
 export function buildModerationSnapshot(params: {
   staticScan?: StaticScanResult;
   vtAnalysis?: VirusTotalAnalysis;
   vtStatus?: string;
   llmStatus?: string;
+  llmAnalysis?: LlmAnalysis;
   sourceVersionId?: Id<"skillVersions">;
 }): ModerationSnapshot {
-  let staticCodes = [...(params.staticScan?.reasonCodes ?? [])];
+  const llmStatus = params.llmStatus ?? params.llmAnalysis?.status;
+  const codexStatus = completedCodexStatus(llmStatus, params.llmAnalysis);
+  const staticCodes = codexStatus
+    ? []
+    : (params.staticScan?.reasonCodes ?? []).filter((code) => code.startsWith("malicious."));
   const evidence = [...(params.staticScan?.findings ?? [])];
 
-  // When both external scanners (VT + LLM) explicitly report clean/benign,
-  // only suppress allowlisted false-positive static codes from the verdict calculation.
-  // Everything else remains part of the moderation decision.
-  const vtClean = isExternalScannerClean(params.vtStatus);
-  const llmClean = isExternalScannerClean(params.llmStatus);
-  if (vtClean && llmClean && staticCodes.length > 0) {
-    staticCodes = staticCodes.filter((code) => !isExternallyClearableSuspiciousCode(code));
-  }
-
   const reasonCodes = [...staticCodes];
-  const vtStatus = params.vtStatus ?? params.vtAnalysis?.status;
-  addScannerStatusReason(reasonCodes, "vt", vtStatus, {
-    suppressSuspicious: isUncorroboratedVtCodeInsightSuspicious({
-      vtAnalysis: params.vtAnalysis,
-      staticScan: params.staticScan,
-      llmStatus: params.llmStatus,
-    }),
-  });
-  addScannerStatusReason(reasonCodes, "llm", params.llmStatus);
+  addLlmStatusReason(reasonCodes, codexStatus, params.llmAnalysis);
 
   const normalizedCodes = normalizeReasonCodes(reasonCodes);
   const verdict = verdictFromCodes(normalizedCodes);
@@ -1271,6 +1481,8 @@ export function resolveSkillVerdict(
   if ((skill.moderationReasonCodes ?? []).some((code) => code.startsWith("malicious."))) {
     return "malicious";
   }
-  if ((skill.moderationReasonCodes ?? []).length > 0) return "suspicious";
+  if ((skill.moderationReasonCodes ?? []).some((code) => code.startsWith("suspicious."))) {
+    return "suspicious";
+  }
   return "clean";
 }

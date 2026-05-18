@@ -4,6 +4,7 @@ import type { Doc, Id } from "./_generated/dataModel";
 import type { ActionCtx } from "./_generated/server";
 import { action, internalAction, internalMutation, internalQuery } from "./functions";
 import { assertRole, requireUserFromAction } from "./lib/access";
+import { extractPackageDigestFields, upsertPackageSearchDigest } from "./lib/packageSearchDigest";
 import { buildSkillSummaryBackfillPatch, type ParsedSkillData } from "./lib/skillBackfill";
 import { deriveSkillCapabilityTags } from "./lib/skillCapabilityTags";
 import {
@@ -14,7 +15,11 @@ import {
 } from "./lib/skillQuality";
 import { hashSkillFiles, isTextFile } from "./lib/skills";
 import { computeIsSuspicious } from "./lib/skillSafety";
-import { extractDigestFields } from "./lib/skillSearchDigest";
+import {
+  extractDigestFields,
+  getFirstSearchToken,
+  normalizeSkillSearchText,
+} from "./lib/skillSearchDigest";
 import { generateSkillSummary } from "./lib/skillSummary";
 
 const DEFAULT_BATCH_SIZE = 50;
@@ -538,70 +543,6 @@ export const applySkillCapabilityTagsInternal = internalMutation({
     }
 
     return { ok: true as const, versionPatched, skillPatched };
-  },
-});
-
-export const softDeleteSkillVersionsInternal = internalMutation({
-  args: {
-    actorUserId: v.id("users"),
-    slug: v.string(),
-    versionIds: v.array(v.id("skillVersions")),
-    reason: v.string(),
-  },
-  handler: async (ctx, args) => {
-    const actor = await ctx.db.get(args.actorUserId);
-    if (!actor || actor.deletedAt || actor.deactivatedAt) {
-      throw new ConvexError("Actor not found");
-    }
-    assertRole(actor, ["admin", "moderator"]);
-
-    const slug = args.slug.trim().toLowerCase();
-    if (!slug) throw new ConvexError("Slug required");
-    if (args.versionIds.length === 0) throw new ConvexError("versionIds required");
-
-    const skill = await ctx.db
-      .query("skills")
-      .withIndex("by_slug", (q) => q.eq("slug", slug))
-      .unique();
-    if (!skill) throw new ConvexError("Skill not found");
-
-    const latestId = skill.latestVersionId ?? skill.tags.latest;
-    const now = Date.now();
-    const deleted: string[] = [];
-    const skipped: Array<{ versionId: string; reason: string }> = [];
-
-    for (const versionId of new Set(args.versionIds)) {
-      const version = await ctx.db.get(versionId);
-      if (!version || version.skillId !== skill._id) {
-        skipped.push({ versionId, reason: "missing_or_wrong_skill" });
-        continue;
-      }
-      if (version._id === latestId) {
-        throw new ConvexError("Refusing to soft-delete latest skill version");
-      }
-      if (version.softDeletedAt) {
-        skipped.push({ versionId, reason: "already_deleted" });
-        continue;
-      }
-      await ctx.db.patch(version._id, { softDeletedAt: now });
-      deleted.push(version.version);
-    }
-
-    await ctx.db.insert("auditLogs", {
-      actorUserId: actor._id,
-      action: "skill_versions.soft_delete",
-      targetType: "skill",
-      targetId: skill._id,
-      metadata: {
-        slug,
-        deleted,
-        skipped,
-        reason: args.reason,
-      },
-      createdAt: now,
-    });
-
-    return { ok: true as const, slug, deleted, skipped };
   },
 });
 
@@ -2035,6 +1976,7 @@ export const backfillLatestVersionSummaryInternal = internalMutation({
 export const backfillLatestSkillModeration: ReturnType<typeof action> = action({
   args: {
     batchSize: v.optional(v.number()),
+    force: v.optional(v.boolean()),
   },
   handler: async (ctx, args) => {
     const { user } = await requireUserFromAction(ctx);
@@ -2112,6 +2054,42 @@ export const backfillSkillSearchDigestInternal = internalMutation({
     }
 
     return { inserted, isDone, scanned: page.length };
+  },
+});
+
+// Backfill plugin category digest rows for existing active packages.
+// Run once after deploying the schema change:
+//   npx convex run maintenance:backfillPackagePluginCategoryDigestsInternal --prod
+export const backfillPackagePluginCategoryDigestsInternal = internalMutation({
+  args: {
+    cursor: v.optional(v.string()),
+    batchSize: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    const batchSize = clampInt(args.batchSize ?? 200, 10, 500);
+    const { page, continueCursor, isDone } = await ctx.db
+      .query("packages")
+      .withIndex("by_active_updated", (q) => q.eq("softDeletedAt", undefined))
+      .paginate({ cursor: args.cursor ?? null, numItems: batchSize });
+
+    let synced = 0;
+    for (const pkg of page) {
+      await upsertPackageSearchDigest(ctx, extractPackageDigestFields(pkg));
+      synced++;
+    }
+
+    if (!isDone) {
+      await ctx.scheduler.runAfter(
+        0,
+        internal.maintenance.backfillPackagePluginCategoryDigestsInternal,
+        {
+          cursor: continueCursor,
+          batchSize: args.batchSize,
+        },
+      );
+    }
+
+    return { synced, isDone, scanned: page.length };
   },
 });
 
@@ -2312,6 +2290,62 @@ export const backfillDigestIsSuspicious = internalMutation({
     }
 
     return { patched, isDone, scanned: page.length };
+  },
+});
+
+// Backfill normalized search fields on skillSearchDigest for indexed prefix search.
+// Run: npx convex run maintenance:backfillDigestNormalizedSearchFields --prod
+export const backfillDigestNormalizedSearchFields = internalMutation({
+  args: {
+    cursor: v.optional(v.string()),
+    batchSize: v.optional(v.number()),
+    delayMs: v.optional(v.number()),
+    scheduleNext: v.optional(v.boolean()),
+  },
+  handler: async (ctx, args) => {
+    const batchSize = clampInt(args.batchSize ?? 100, 10, 200);
+    const delayMs = args.delayMs ?? 500;
+    const { page, continueCursor, isDone } = await ctx.db
+      .query("skillSearchDigest")
+      .paginate({ cursor: args.cursor ?? null, numItems: batchSize });
+
+    let patched = 0;
+    for (const digest of page) {
+      const normalizedSlug = normalizeSkillSearchText(digest.slug);
+      const normalizedSlugFirstToken = getFirstSearchToken(digest.slug);
+      const normalizedDisplayName = normalizeSkillSearchText(digest.displayName);
+      const normalizedDisplayNameFirstToken = getFirstSearchToken(digest.displayName);
+      if (
+        digest.normalizedSlug === normalizedSlug &&
+        digest.normalizedSlugFirstToken === normalizedSlugFirstToken &&
+        digest.normalizedDisplayName === normalizedDisplayName &&
+        digest.normalizedDisplayNameFirstToken === normalizedDisplayNameFirstToken
+      ) {
+        continue;
+      }
+      await ctx.db.patch(digest._id, {
+        normalizedSlug,
+        normalizedSlugFirstToken,
+        normalizedDisplayName,
+        normalizedDisplayNameFirstToken,
+      });
+      patched++;
+    }
+
+    if (!isDone && args.scheduleNext !== false) {
+      await ctx.scheduler.runAfter(
+        delayMs,
+        internal.maintenance.backfillDigestNormalizedSearchFields,
+        {
+          cursor: continueCursor,
+          batchSize: args.batchSize,
+          delayMs: args.delayMs,
+          scheduleNext: args.scheduleNext,
+        },
+      );
+    }
+
+    return { patched, isDone, scanned: page.length, cursor: continueCursor };
   },
 });
 

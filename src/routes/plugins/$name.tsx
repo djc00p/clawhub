@@ -1,24 +1,25 @@
-import { createFileRoute, Link, Outlet, useRouterState } from "@tanstack/react-router";
-import { useMutation, useQuery } from "convex/react";
-import { AlertTriangle, ExternalLink, Download } from "lucide-react";
-import type { ComponentProps } from "react";
-import { toast } from "sonner";
+import { createFileRoute, Link, Outlet, redirect, useRouterState } from "@tanstack/react-router";
+import { useQuery } from "convex/react";
+import { AlertTriangle, Download, Settings, Upload } from "lucide-react";
+import { useState, type ReactNode } from "react";
 import { api } from "../../../convex/_generated/api";
-import type { Id } from "../../../convex/_generated/dataModel";
 import { DetailHero, DetailPageShell } from "../../components/DetailPageShell";
 import { DetailSecuritySummary } from "../../components/DetailSecuritySummary";
 import { EmptyState } from "../../components/EmptyState";
 import { InstallCopyButton } from "../../components/InstallCopyButton";
 import { Container } from "../../components/layout/Container";
 import { MarkdownPreview } from "../../components/MarkdownPreview";
+import { SidebarMetadata } from "../../components/SidebarMetadata";
+import { SkillDetailSkeleton } from "../../components/skeletons/SkillDetailSkeleton";
 import { Badge } from "../../components/ui/badge";
 import { Button } from "../../components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "../../components/ui/card";
-import { getUserFacingConvexError } from "../../lib/convexError";
 import { formatRetryDelay } from "../../lib/formatRetryDelay";
+import { getOpenClawPackageCandidateNames } from "../../lib/openClawExtensionSlugs";
 import {
   fetchPackageDetail,
   fetchPackageReadme,
+  getPackageArtifactDownloadPath,
   fetchPackageVersion,
   getPackageDownloadPath,
   isRateLimitedPackageApiError,
@@ -26,6 +27,11 @@ import {
   type PackageVersionDetail,
 } from "../../lib/packageApi";
 import { familyLabel } from "../../lib/packageLabels";
+import {
+  buildPluginDetailHref,
+  buildPluginSecurityBaseHref,
+  parseScopedPackageName,
+} from "../../lib/pluginRoutes";
 import { useAuthStatus } from "../../lib/useAuthStatus";
 
 type PluginDetailRateLimitState = {
@@ -33,121 +39,116 @@ type PluginDetailRateLimitState = {
   retryAfterSeconds: number | null;
 } | null;
 
-type PluginDetailLoaderData = {
+type PluginDetailTab = "readme" | "capabilities" | "compatibility" | "verification";
+
+export type PluginDetailLoaderData = {
   detail: PackageDetailResponse;
   version: PackageVersionDetail | null;
   readme: string | null;
   rateLimited: PluginDetailRateLimitState;
 };
 
-export const Route = createFileRoute("/plugins/$name")({
-  loader: async ({ params }): Promise<PluginDetailLoaderData> => {
-    const requestedName = params.name;
-    const candidateNames = requestedName.includes("/")
-      ? [requestedName]
-      : [requestedName, `@openclaw/${requestedName}`];
+export async function loadPluginDetail(requestedName: string): Promise<PluginDetailLoaderData> {
+  const candidateNames = getOpenClawPackageCandidateNames(requestedName);
 
-    let resolvedName = requestedName;
-    let detail: PackageDetailResponse = { package: null, owner: null };
+  let resolvedName = requestedName;
+  let detail: PackageDetailResponse = { package: null, owner: null };
 
-    for (const candidateName of candidateNames) {
-      let candidateDetail: PackageDetailResponse;
-      try {
-        candidateDetail = await fetchPackageDetail(candidateName);
-      } catch (error) {
-        if (isRateLimitedPackageApiError(error)) {
-          return {
-            detail: { package: null, owner: null },
-            version: null,
-            readme: null,
-            rateLimited: {
-              scope: "detail",
-              retryAfterSeconds: error.retryAfterSeconds,
-            },
-          };
-        }
-        throw error;
-      }
-      if (candidateDetail.package) {
-        detail = candidateDetail;
-        resolvedName = candidateName;
-        break;
-      }
-      detail = candidateDetail;
-    }
-
-    if (!detail.package) {
-      return { detail, version: null, readme: null, rateLimited: null };
-    }
-
+  for (const candidateName of candidateNames) {
+    let candidateDetail: PackageDetailResponse;
     try {
-      const [version, readme] = await Promise.all([
-        detail.package.latestVersion
-          ? fetchPackageVersion(resolvedName, detail.package.latestVersion)
-          : Promise.resolve(null),
-        fetchPackageReadme(resolvedName),
-      ]);
-
-      return { detail, version, readme, rateLimited: null };
+      candidateDetail = await fetchPackageDetail(candidateName);
     } catch (error) {
       if (isRateLimitedPackageApiError(error)) {
         return {
-          detail,
+          detail: { package: null, owner: null },
           version: null,
           readme: null,
           rateLimited: {
-            scope: "metadata",
+            scope: "detail",
             retryAfterSeconds: error.retryAfterSeconds,
           },
         };
       }
       throw error;
     }
-  },
-  head: ({ params, loaderData }) => ({
+    if (candidateDetail.package) {
+      detail = candidateDetail;
+      resolvedName = candidateName;
+      break;
+    }
+    detail = candidateDetail;
+  }
+
+  if (!detail.package) {
+    return { detail, version: null, readme: null, rateLimited: null };
+  }
+
+  try {
+    const [version, readme] = await Promise.all([
+      detail.package.latestVersion
+        ? fetchPackageVersion(resolvedName, detail.package.latestVersion)
+        : Promise.resolve(null),
+      fetchPackageReadme(resolvedName),
+    ]);
+
+    return { detail, version, readme, rateLimited: null };
+  } catch (error) {
+    if (isRateLimitedPackageApiError(error)) {
+      return {
+        detail,
+        version: null,
+        readme: null,
+        rateLimited: {
+          scope: "metadata",
+          retryAfterSeconds: error.retryAfterSeconds,
+        },
+      };
+    }
+    throw error;
+  }
+}
+
+export function pluginDetailHead(name: string, loaderData?: PluginDetailLoaderData) {
+  return {
     meta: [
       {
         title: loaderData?.detail.package?.displayName
           ? `${loaderData.detail.package.displayName} · Plugins`
-          : params.name,
+          : name,
       },
       {
         name: "description",
-        content: loaderData?.detail.package?.summary ?? `Plugin ${params.name}`,
+        content: loaderData?.detail.package?.summary ?? `Plugin ${name}`,
       },
     ],
-  }),
+  };
+}
+
+export const Route = createFileRoute("/plugins/$name")({
+  beforeLoad: ({ location, params }) => {
+    if (parseScopedPackageName(params.name)) {
+      const encodedSecurityPrefix = `/plugins/${encodeURIComponent(params.name)}/security/`;
+      if (location.pathname.startsWith(encodedSecurityPrefix)) {
+        throw redirect({
+          href: `${buildPluginSecurityBaseHref(params.name)}/${location.pathname.slice(
+            encodedSecurityPrefix.length,
+          )}`,
+          statusCode: 308,
+        });
+      }
+
+      throw redirect({
+        href: buildPluginDetailHref(params.name),
+        statusCode: 308,
+      });
+    }
+  },
+  loader: async ({ params }) => loadPluginDetail(params.name),
+  head: ({ params, loaderData }) => pluginDetailHead(params.name, loaderData),
+  pendingComponent: PluginDetailPending,
   component: PluginDetailRoute,
 });
-
-function VerifiedBadge() {
-  return (
-    <span className="inline-flex items-center gap-1.5 text-[#3b82f6]">
-      <svg
-        width="16"
-        height="16"
-        viewBox="0 0 16 16"
-        fill="none"
-        xmlns="http://www.w3.org/2000/svg"
-        aria-label="Verified publisher"
-        className="shrink-0"
-      >
-        <path
-          d="M8 0L9.79 1.52L12.12 1.21L12.93 3.41L15.01 4.58L14.42 6.84L15.56 8.82L14.12 10.5L14.12 12.82L11.86 13.41L10.34 15.27L8 14.58L5.66 15.27L4.14 13.41L1.88 12.82L1.88 10.5L0.44 8.82L1.58 6.84L0.99 4.58L3.07 3.41L3.88 1.21L6.21 1.52L8 0Z"
-          fill="#3b82f6"
-        />
-        <path
-          d="M5.5 8L7 9.5L10.5 6"
-          stroke="white"
-          strokeWidth="1.5"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-        />
-      </svg>
-      Verified
-    </span>
-  );
-}
 
 const CAPABILITY_LABELS: Record<string, string> = {
   executesCode: "Executes code",
@@ -175,23 +176,172 @@ function formatCapabilityValue(value: unknown): string {
   return JSON.stringify(value);
 }
 
+function formatDisplayValue(value: string): string {
+  return value
+    .split(/[-_\s]+/)
+    .filter(Boolean)
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
+}
+
+function formatArtifactSize(value: number | null | undefined): string | null {
+  if (typeof value !== "number" || !Number.isFinite(value) || value < 0) return null;
+  if (value < 1024) return `${value} B`;
+  const units = ["KB", "MB", "GB"] as const;
+  let size = value / 1024;
+  let unitIndex = 0;
+  while (size >= 1024 && unitIndex < units.length - 1) {
+    size /= 1024;
+    unitIndex += 1;
+  }
+  return `${size >= 10 ? size.toFixed(0) : size.toFixed(1)} ${units[unitIndex]}`;
+}
+
 function isEmptyObject(obj: unknown): boolean {
   if (!obj || typeof obj !== "object") return true;
   return Object.keys(obj).length === 0;
 }
 
-function PluginDetailRoute() {
-  const { name } = Route.useParams();
-  const { detail, version, readme, rateLimited } = Route.useLoaderData() as PluginDetailLoaderData;
-  const pathname = useRouterState({ select: (state) => state.location.pathname });
-  const { isAuthenticated } = useAuthStatus();
-  const requestPluginRescan = useMutation(api.packages.requestRescan);
-  const rescanState = useQuery(
-    api.packages.getOwnerRescanStateByName,
-    isAuthenticated && detail.package ? { name: detail.package.name } : "skip",
-  ) as ComponentProps<typeof DetailSecuritySummary>["rescanState"] | undefined;
+function PluginDetailTabs({
+  activeTab,
+  setActiveTab,
+  readmePanel,
+  capabilitiesPanel,
+  compatibilityPanel,
+  verificationPanel,
+}: {
+  activeTab: PluginDetailTab;
+  setActiveTab: (tab: PluginDetailTab) => void;
+  readmePanel: ReactNode;
+  capabilitiesPanel: ReactNode | null;
+  compatibilityPanel: ReactNode | null;
+  verificationPanel: ReactNode | null;
+}) {
+  const selectTab = (tab: PluginDetailTab) => {
+    setActiveTab(tab);
+    if (typeof window === "undefined") return;
+    const hash = tab === "readme" ? "" : `#${tab}`;
+    window.history.replaceState(
+      null,
+      "",
+      `${window.location.pathname}${window.location.search}${hash}`,
+    );
+  };
 
-  if (pathname.includes("/security/")) {
+  const effectiveActiveTab =
+    activeTab === "capabilities" && capabilitiesPanel
+      ? "capabilities"
+      : activeTab === "compatibility" && compatibilityPanel
+        ? "compatibility"
+        : activeTab === "verification" && verificationPanel
+          ? "verification"
+          : "readme";
+  const activePanel =
+    effectiveActiveTab === "capabilities" && capabilitiesPanel
+      ? capabilitiesPanel
+      : effectiveActiveTab === "compatibility" && compatibilityPanel
+        ? compatibilityPanel
+        : effectiveActiveTab === "verification" && verificationPanel
+          ? verificationPanel
+          : readmePanel;
+
+  return (
+    <div className="tab-card">
+      <div className="tab-header" role="tablist" aria-label="Plugin detail tabs">
+        <button
+          className={`tab-button${effectiveActiveTab === "readme" ? " is-active" : ""}`}
+          type="button"
+          role="tab"
+          aria-selected={effectiveActiveTab === "readme"}
+          onClick={() => selectTab("readme")}
+        >
+          README
+        </button>
+        {capabilitiesPanel ? (
+          <button
+            className={`tab-button${effectiveActiveTab === "capabilities" ? " is-active" : ""}`}
+            type="button"
+            role="tab"
+            aria-selected={effectiveActiveTab === "capabilities"}
+            onClick={() => selectTab("capabilities")}
+          >
+            Capabilities
+          </button>
+        ) : null}
+        {compatibilityPanel ? (
+          <button
+            className={`tab-button${effectiveActiveTab === "compatibility" ? " is-active" : ""}`}
+            type="button"
+            role="tab"
+            aria-selected={effectiveActiveTab === "compatibility"}
+            onClick={() => selectTab("compatibility")}
+          >
+            Compatibility
+          </button>
+        ) : null}
+        {verificationPanel ? (
+          <button
+            className={`tab-button${effectiveActiveTab === "verification" ? " is-active" : ""}`}
+            type="button"
+            role="tab"
+            aria-selected={effectiveActiveTab === "verification"}
+            onClick={() => selectTab("verification")}
+          >
+            Verification
+          </button>
+        ) : null}
+      </div>
+      <div className="tab-body">{activePanel}</div>
+    </div>
+  );
+}
+
+function PluginDetailRoute() {
+  return (
+    <PluginDetailPage
+      name={Route.useParams().name}
+      loaderData={Route.useLoaderData() as PluginDetailLoaderData}
+    />
+  );
+}
+
+export function PluginDetailPending() {
+  return (
+    <main className="section detail-page-section" aria-busy="true">
+      <div role="status" aria-label="Loading plugin details">
+        <SkillDetailSkeleton kind="plugin" />
+      </div>
+    </main>
+  );
+}
+
+export function PluginDetailPage({
+  name,
+  loaderData,
+}: {
+  name: string;
+  loaderData: PluginDetailLoaderData;
+}) {
+  const { detail, version, readme, rateLimited } = loaderData;
+  const pathname = useRouterState({ select: (state) => state.location.pathname });
+  const { me } = useAuthStatus();
+  const isNestedPluginRoute = pathname.includes("/security/") || pathname.endsWith("/settings");
+  const settingsCandidateNames = getOpenClawPackageCandidateNames(name);
+  const settingsLookupName = detail.package?.name ?? settingsCandidateNames[0] ?? name;
+  const settings = useQuery(
+    api.packages.getClawScanNoteSettings,
+    me && !isNestedPluginRoute && detail.package
+      ? { name: settingsLookupName, candidateNames: settingsCandidateNames }
+      : "skip",
+  );
+  const [activeTab, setActiveTab] = useState<PluginDetailTab>(() => {
+    if (typeof window === "undefined") return "readme";
+    const hash = window.location.hash.replace("#", "");
+    return hash === "capabilities" || hash === "compatibility" || hash === "verification"
+      ? hash
+      : "readme";
+  });
+  if (isNestedPluginRoute) {
     return <Outlet />;
   }
 
@@ -233,50 +383,221 @@ function PluginDetailRoute() {
   const latestRelease = version?.version ?? null;
   const isDownloadBlocked =
     pkg.verification?.scanStatus === "malicious" ||
-    latestRelease?.verification?.scanStatus === "malicious" ||
-    latestRelease?.vtAnalysis?.status === "malicious" ||
-    latestRelease?.vtAnalysis?.verdict === "malicious";
+    latestRelease?.verification?.scanStatus === "malicious";
   const installSnippet =
     pkg.family === "code-plugin"
       ? `openclaw plugins install clawhub:${pkg.name}`
       : pkg.family === "bundle-plugin"
-        ? `openclaw bundles install clawhub:${pkg.name}`
+        ? `openclaw plugins install clawhub:${pkg.name}`
         : `openclaw skills install ${pkg.name}`;
 
   const capabilities = latestRelease?.capabilities ?? pkg.capabilities;
   const compatibility = latestRelease?.compatibility ?? pkg.compatibility;
   const verification = latestRelease?.verification ?? pkg.verification;
-  const requestRescan = async () => {
-    const packageId = (pkg as { _id?: Id<"packages"> })._id;
-    if (!packageId) {
-      toast.error("Could not request a rescan for this plugin.");
-      return;
-    }
-    try {
-      await requestPluginRescan({ packageId });
-      toast.success("Rescan requested.", {
-        action: {
-          label: "Dashboard",
-          onClick: () => {
-            window.location.href = "/dashboard";
-          },
-        },
-      });
-    } catch (error) {
-      toast.error(getUserFacingConvexError(error, "Could not request a rescan."));
-    }
-  };
-
+  const artifact = latestRelease?.artifact ?? pkg.artifact ?? null;
+  const downloadPath =
+    pkg.latestVersion && latestRelease?.version && artifact?.kind === "npm-pack"
+      ? getPackageArtifactDownloadPath(pkg.name, latestRelease.version)
+      : getPackageDownloadPath(pkg.name, pkg.latestVersion);
+  const settingsHref = settings ? `${buildPluginDetailHref(pkg.name)}/settings` : null;
+  const newVersionHref = settings
+    ? `/plugins/publish?${new URLSearchParams({
+        ...(owner?.handle ? { ownerHandle: owner.handle } : {}),
+        name: pkg.name,
+        displayName: pkg.displayName,
+      }).toString()}`
+    : null;
   const capEntries = capabilities
     ? Object.entries(capabilities).filter(
         ([, v]) =>
           v !== undefined && v !== null && v !== false && !(Array.isArray(v) && v.length === 0),
       )
     : [];
+  const executesCodeValue =
+    typeof capabilities?.executesCode === "boolean"
+      ? formatCapabilityValue(capabilities.executesCode)
+      : null;
+  const tabCapEntries = capEntries.filter(([key]) => key !== "executesCode");
 
   const compatEntries = compatibility
     ? Object.entries(compatibility).filter(([, v]) => v !== undefined && v !== null)
     : [];
+  const readmePanel = readme ? (
+    <MarkdownPreview>{readme}</MarkdownPreview>
+  ) : (
+    <div className="empty-state px-[var(--space-4)] py-[var(--space-6)]">
+      <p className="empty-state-title">No README available</p>
+      <p className="empty-state-body">This plugin doesn't have a README yet.</p>
+    </div>
+  );
+  const capabilitiesPanel =
+    tabCapEntries.length > 0 ? (
+      <div className="plugin-tab-panel">
+        <dl className="plugin-kv-grid">
+          {tabCapEntries.map(([key, value]) => (
+            <div key={key} className="plugin-kv-row">
+              <dt className="plugin-kv-label">{CAPABILITY_LABELS[key] ?? key}</dt>
+              <dd className="plugin-kv-value">
+                {key === "capabilityTags" && Array.isArray(value) ? (
+                  <div className="plugin-tag-list">
+                    {(value as string[]).map((tag) => (
+                      <Link key={tag} to="/plugins" search={{ q: tag }}>
+                        <Badge variant="compact">{tag}</Badge>
+                      </Link>
+                    ))}
+                  </div>
+                ) : key === "hostTargets" && Array.isArray(value) ? (
+                  <div className="plugin-tag-list">
+                    {(value as string[]).map((target) => (
+                      <Badge key={target} variant="compact">
+                        {target}
+                      </Badge>
+                    ))}
+                  </div>
+                ) : (
+                  formatCapabilityValue(value)
+                )}
+              </dd>
+            </div>
+          ))}
+        </dl>
+      </div>
+    ) : null;
+  const compatibilityPanel =
+    compatEntries.length > 0 || artifact ? (
+      <div className="plugin-tab-panel">
+        <dl className="plugin-kv-grid">
+          {artifact ? (
+            <>
+              <div className="plugin-kv-row">
+                <dt className="plugin-kv-label">Artifact</dt>
+                <dd className="plugin-kv-value">
+                  {artifact.kind === "npm-pack" ? "ClawPack" : "Legacy ZIP"}
+                </dd>
+              </div>
+              {artifact.kind === "legacy-zip" ? (
+                <div className="plugin-kv-row">
+                  <dt className="plugin-kv-label">Compatibility note</dt>
+                  <dd className="plugin-kv-value">
+                    This plugin uses the legacy ZIP path and may have compatibility issues until the
+                    publisher uploads a ClawPack.
+                  </dd>
+                </div>
+              ) : null}
+              {artifact.kind === "npm-pack" && artifact.npmTarballName ? (
+                <div className="plugin-kv-row">
+                  <dt className="plugin-kv-label">Tarball</dt>
+                  <dd className="plugin-kv-value font-mono text-xs">{artifact.npmTarballName}</dd>
+                </div>
+              ) : null}
+              {artifact.kind === "npm-pack" && formatArtifactSize(artifact.size) ? (
+                <div className="plugin-kv-row">
+                  <dt className="plugin-kv-label">Size</dt>
+                  <dd className="plugin-kv-value">{formatArtifactSize(artifact.size)}</dd>
+                </div>
+              ) : null}
+              {artifact.kind === "npm-pack" && typeof artifact.npmFileCount === "number" ? (
+                <div className="plugin-kv-row">
+                  <dt className="plugin-kv-label">Files</dt>
+                  <dd className="plugin-kv-value">{artifact.npmFileCount}</dd>
+                </div>
+              ) : null}
+              {artifact.kind === "npm-pack" && artifact.npmIntegrity ? (
+                <div className="plugin-kv-row">
+                  <dt className="plugin-kv-label">Integrity</dt>
+                  <dd className="plugin-kv-value font-mono text-xs">{artifact.npmIntegrity}</dd>
+                </div>
+              ) : null}
+            </>
+          ) : null}
+          {compatEntries.map(([key, value]) => (
+            <div key={key} className="plugin-kv-row">
+              <dt className="plugin-kv-label">
+                {key.replace(/([A-Z])/g, " $1").replace(/^./, (s) => s.toUpperCase())}
+              </dt>
+              <dd className="plugin-kv-value font-mono text-xs">{value}</dd>
+            </div>
+          ))}
+        </dl>
+      </div>
+    ) : null;
+  const verificationPanel =
+    verification && !isEmptyObject(verification) ? (
+      <div className="plugin-tab-panel">
+        <dl className="plugin-kv-grid">
+          {verification.tier ? (
+            <div className="plugin-kv-row">
+              <dt className="plugin-kv-label">Tier</dt>
+              <dd className="plugin-kv-value">{formatDisplayValue(verification.tier)}</dd>
+            </div>
+          ) : null}
+          {verification.scope ? (
+            <div className="plugin-kv-row">
+              <dt className="plugin-kv-label">Scope</dt>
+              <dd className="plugin-kv-value">{formatDisplayValue(verification.scope)}</dd>
+            </div>
+          ) : null}
+          {verification.summary ? (
+            <div className="plugin-kv-row">
+              <dt className="plugin-kv-label">Summary</dt>
+              <dd className="plugin-kv-value">{verification.summary}</dd>
+            </div>
+          ) : null}
+        </dl>
+      </div>
+    ) : null;
+  const sourceRepoLink = verification?.sourceRepo
+    ? (() => {
+        const raw = verification.sourceRepo;
+        const href = /^https?:\/\//.test(raw) ? raw : `https://github.com/${raw}`;
+        const display = href
+          .replace(/^https?:\/\/github\.com\//, "")
+          .replace(/^https?:\/\//, "")
+          .replace(/\/$/, "");
+        return (
+          <a href={href} target="_blank" rel="noopener noreferrer" className="plugin-external-link">
+            {display}
+          </a>
+        );
+      })()
+    : null;
+  const tagMetadataValue =
+    pkg.tags && Object.keys(pkg.tags).length > 0 ? (
+      <span className="plugin-sidebar-tag-list">
+        {Object.entries(pkg.tags).map(([key, value]) => (
+          <span key={key}>
+            {key} {String(value)}
+          </span>
+        ))}
+      </span>
+    ) : null;
+  const ownerMetadataValue = owner ? (
+    <span className="user-badge user-badge-md">
+      <span className="user-avatar" aria-hidden="true">
+        {owner.image ? (
+          <img className="user-avatar-img" src={owner.image} alt="" loading="lazy" />
+        ) : (
+          <span className="user-avatar-fallback">
+            {(owner.displayName ?? owner.handle ?? "p").charAt(0).toUpperCase()}
+          </span>
+        )}
+      </span>
+      {owner.handle ? (
+        <a className="user-name" href={`/user/${encodeURIComponent(owner.handle)}`}>
+          {owner.displayName ?? owner.handle}
+        </a>
+      ) : (
+        <span className="user-name">{owner.displayName ?? "unknown"}</span>
+      )}
+    </span>
+  ) : null;
+  const hasSourceMetadata = Boolean(
+    sourceRepoLink ||
+    ownerMetadataValue ||
+    executesCodeValue ||
+    pkg.latestVersion ||
+    tagMetadataValue,
+  );
 
   return (
     <main className="section detail-page-section">
@@ -284,21 +605,19 @@ function PluginDetailRoute() {
         <DetailHero
           main={
             <div className="skill-hero-title">
+              <nav className="skill-hero-breadcrumbs" aria-label="Plugin breadcrumbs">
+                <a href="/plugins">plugins</a>
+                <span aria-hidden="true">/</span>
+                <a href={owner?.handle ? `/user/${encodeURIComponent(owner.handle)}` : "#"}>
+                  {owner?.handle ?? owner?.displayName ?? "unknown"}
+                </a>
+                <span aria-hidden="true">/</span>
+                <a href="/plugins">plugins</a>
+                <span aria-hidden="true">/</span>
+                <a href={buildPluginDetailHref(pkg.name)}>{pkg.name}</a>
+              </nav>
               <div className="skill-hero-title-row">
                 <h1 className="skill-page-title">{pkg.displayName}</h1>
-                {pkg.latestVersion ? (
-                  <span className="plugin-version-badge">v{pkg.latestVersion}</span>
-                ) : null}
-                {pkg.latestVersion && !isDownloadBlocked ? (
-                  <div className="skill-title-actions">
-                    <Button asChild variant="outline" size="sm" className="no-underline">
-                      <a href={getPackageDownloadPath(name, pkg.latestVersion)}>
-                        <Download className="h-3.5 w-3.5" aria-hidden="true" />
-                        Download
-                      </a>
-                    </Button>
-                  </div>
-                ) : null}
                 {isDownloadBlocked ? (
                   <div className="skill-title-actions">
                     <Badge variant="destructive">Download blocked</Badge>
@@ -307,72 +626,84 @@ function PluginDetailRoute() {
               </div>
               <p className="section-subtitle">{pkg.summary ?? "No summary provided."}</p>
 
-              <div className="skill-hero-inline-meta">
-                <div className="skill-hero-stats-row">
-                  <span className="stat font-mono text-xs">{pkg.name}</span>
-                  {pkg.runtimeId ? (
-                    <>
-                      <span className="text-ink-soft opacity-40">·</span>
-                      <span className="stat">
-                        runtime <span className="font-mono text-xs">{pkg.runtimeId}</span>
-                      </span>
-                    </>
+              {rateLimited?.scope === "metadata" ? (
+                <div className="skill-hero-badges">
+                  <Badge variant="compact">Some metadata is temporarily unavailable</Badge>
+                </div>
+              ) : null}
+            </div>
+          }
+          sidebar={
+            <div className="plugin-sidebar-stack">
+              {hasSourceMetadata ? (
+                <SidebarMetadata
+                  ariaLabel="Plugin metadata"
+                  density="compact"
+                  blocks={[
+                    { label: "Repository", value: sourceRepoLink },
+                    { label: "Owner", value: ownerMetadataValue },
+                    { label: "Executes code", value: executesCodeValue },
+                    {
+                      grid: [
+                        {
+                          label: "Current version",
+                          value: pkg.latestVersion ? `v${pkg.latestVersion}` : null,
+                        },
+                        { label: "Type", value: familyLabel(pkg.family) },
+                      ],
+                    },
+                    { label: "Tags", value: tagMetadataValue },
+                  ]}
+                />
+              ) : null}
+
+              {(pkg.latestVersion && !isDownloadBlocked) || newVersionHref || settingsHref ? (
+                <div className="skill-sidebar-actions">
+                  {pkg.latestVersion && !isDownloadBlocked ? (
+                    <Button asChild variant="outline" className="skill-sidebar-action-button">
+                      <a href={downloadPath}>
+                        <Download size={14} aria-hidden="true" />
+                        Download
+                      </a>
+                    </Button>
                   ) : null}
-                  {owner?.handle ? (
-                    <>
-                      <span className="text-ink-soft opacity-40">·</span>
-                      <Link
-                        to="/u/$handle"
-                        params={{ handle: owner.handle }}
-                        className="text-[color:var(--accent)] hover:underline"
-                      >
-                        by @{owner.handle}
-                      </Link>
-                    </>
+                  {newVersionHref ? (
+                    <Button asChild variant="outline" className="skill-sidebar-action-button">
+                      <a href={newVersionHref}>
+                        <Upload size={14} aria-hidden="true" />
+                        New version
+                      </a>
+                    </Button>
+                  ) : null}
+                  {settingsHref ? (
+                    <Button asChild variant="outline" className="skill-sidebar-action-button">
+                      <a href={settingsHref}>
+                        <Settings size={14} aria-hidden="true" />
+                        Settings
+                      </a>
+                    </Button>
                   ) : null}
                 </div>
-              </div>
-
-              <div className="skill-hero-badges">
-                <Badge>{familyLabel(pkg.family)}</Badge>
-                {verification?.tier ? (
-                  <Badge variant="compact">{verification.tier.replace(/-/g, " ")}</Badge>
-                ) : null}
-                {rateLimited?.scope === "metadata" ? (
-                  <Badge variant="compact">Some metadata is temporarily unavailable</Badge>
-                ) : null}
-                {pkg.isOfficial ? (
-                  <Badge className="bg-[rgba(59,130,246,0.15)] text-[#3b82f6]">
-                    <VerifiedBadge />
-                  </Badge>
-                ) : null}
-                {pkg.family === "code-plugin" && !pkg.isOfficial ? (
-                  <Badge variant="accent">
-                    Community code plugin. Review compatibility and verification before install.
-                  </Badge>
-                ) : null}
-              </div>
+              ) : null}
             </div>
           }
         >
-          <div className="skill-hero-action-grid">
-            {latestRelease ? (
-              <DetailSecuritySummary
-                scannerBasePath={`/plugins/${encodeURIComponent(name)}/security`}
-                sha256hash={latestRelease.sha256hash ?? null}
-                vtAnalysis={latestRelease.vtAnalysis ?? null}
-                llmAnalysis={latestRelease.llmAnalysis ?? null}
-                staticScan={latestRelease.staticScan ?? null}
-                rescanState={rescanState ?? null}
-                onRequestRescan={rescanState ? requestRescan : null}
-              />
-            ) : null}
-            <Card className="skill-install-command-card">
-              <CardHeader>
-                <CardTitle>Install</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <div className="skill-install-command-wrap">
+          {latestRelease ? (
+            <DetailSecuritySummary
+              scannerBasePath={buildPluginSecurityBaseHref(name)}
+              sha256hash={latestRelease.sha256hash ?? null}
+              vtAnalysis={latestRelease.vtAnalysis ?? null}
+              llmAnalysis={latestRelease.llmAnalysis ?? null}
+              staticScan={latestRelease.staticScan ?? null}
+            />
+          ) : null}
+          <Card className="skill-install-command-card">
+            <CardHeader>
+              <CardTitle>Install</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="skill-install-command-wrap">
+                <div className="skill-install-command-shell">
                   <pre className="skill-install-command">
                     <code>{installSnippet}</code>
                   </pre>
@@ -383,210 +714,17 @@ function PluginDetailRoute() {
                     className="skill-install-command-inline-button"
                   />
                 </div>
-              </CardContent>
-            </Card>
-          </div>
-
-          {readme ? (
-            <Card className="tab-card">
-              <CardHeader>
-                <CardTitle>README</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <MarkdownPreview>{readme}</MarkdownPreview>
-              </CardContent>
-            </Card>
-          ) : null}
-
-          {/* Capabilities */}
-          {capEntries.length > 0 ? (
-            <Card>
-              <CardHeader className="gap-3 sm:flex-row sm:items-center sm:justify-between">
-                <CardTitle>Capabilities</CardTitle>
-                <InstallCopyButton
-                  text={JSON.stringify(capabilities, null, 2)}
-                  ariaLabel="Copy capabilities JSON"
-                />
-              </CardHeader>
-              <CardContent>
-                <dl className="flex flex-col gap-3 text-sm">
-                  {capEntries.map(([key, value]) => (
-                    <div
-                      key={key}
-                      className="flex flex-col gap-1.5 border-b border-[color:var(--line)] pb-3 last:border-b-0 last:pb-0 sm:grid sm:grid-cols-[minmax(140px,220px)_1fr] sm:gap-x-4 sm:gap-y-0"
-                    >
-                      <dt className="font-semibold text-[color:var(--ink-soft)] sm:pr-2">
-                        {CAPABILITY_LABELS[key] ?? key}
-                      </dt>
-                      <dd className="min-w-0 break-words text-[color:var(--ink)]">
-                        {key === "capabilityTags" && Array.isArray(value) ? (
-                          <div className="flex flex-wrap gap-1.5">
-                            {(value as string[]).map((tag) => (
-                              <Link key={tag} to="/plugins" search={{ q: tag }}>
-                                <Badge variant="compact">{tag}</Badge>
-                              </Link>
-                            ))}
-                          </div>
-                        ) : key === "hostTargets" && Array.isArray(value) ? (
-                          <div className="flex flex-wrap gap-1.5">
-                            {(value as string[]).map((target) => (
-                              <Badge key={target} variant="compact">
-                                {target}
-                              </Badge>
-                            ))}
-                          </div>
-                        ) : (
-                          formatCapabilityValue(value)
-                        )}
-                      </dd>
-                    </div>
-                  ))}
-                </dl>
-              </CardContent>
-            </Card>
-          ) : null}
-
-          {/* Compatibility */}
-          {compatEntries.length > 0 ? (
-            <Card>
-              <CardHeader className="gap-3 sm:flex-row sm:items-center sm:justify-between">
-                <CardTitle>Compatibility</CardTitle>
-                <InstallCopyButton
-                  text={JSON.stringify(compatibility, null, 2)}
-                  ariaLabel="Copy compatibility JSON"
-                />
-              </CardHeader>
-              <CardContent>
-                <dl className="flex flex-col gap-3 text-sm">
-                  {compatEntries.map(([key, value]) => (
-                    <div
-                      key={key}
-                      className="flex flex-col gap-1.5 border-b border-[color:var(--line)] pb-3 last:border-b-0 last:pb-0 sm:grid sm:grid-cols-[minmax(140px,220px)_1fr] sm:gap-x-4 sm:gap-y-0"
-                    >
-                      <dt className="font-semibold text-[color:var(--ink-soft)] sm:pr-2">
-                        {key.replace(/([A-Z])/g, " $1").replace(/^./, (s) => s.toUpperCase())}
-                      </dt>
-                      <dd className="min-w-0 break-all font-mono text-xs text-[color:var(--ink)]">
-                        {value}
-                      </dd>
-                    </div>
-                  ))}
-                </dl>
-              </CardContent>
-            </Card>
-          ) : null}
-
-          {/* Verification */}
-          {verification && !isEmptyObject(verification) ? (
-            <Card>
-              <CardHeader>
-                <CardTitle>Verification</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <dl className="flex flex-col gap-3 text-sm">
-                  {verification.tier ? (
-                    <div className="flex flex-col gap-1.5 border-b border-[color:var(--line)] pb-3 sm:grid sm:grid-cols-[minmax(140px,220px)_1fr] sm:gap-x-4 sm:gap-y-0">
-                      <dt className="font-semibold text-[color:var(--ink-soft)]">Tier</dt>
-                      <dd className="text-[color:var(--ink)]">
-                        {verification.tier.replace(/-/g, " ")}
-                      </dd>
-                    </div>
-                  ) : null}
-                  {verification.scope ? (
-                    <div className="flex flex-col gap-1.5 border-b border-[color:var(--line)] pb-3 sm:grid sm:grid-cols-[minmax(140px,220px)_1fr] sm:gap-x-4 sm:gap-y-0">
-                      <dt className="font-semibold text-[color:var(--ink-soft)]">Scope</dt>
-                      <dd className="text-[color:var(--ink)]">
-                        {verification.scope.replace(/-/g, " ")}
-                      </dd>
-                    </div>
-                  ) : null}
-                  {verification.summary ? (
-                    <div className="flex flex-col gap-1.5 border-b border-[color:var(--line)] pb-3 sm:grid sm:grid-cols-[minmax(140px,220px)_1fr] sm:gap-x-4 sm:gap-y-0">
-                      <dt className="font-semibold text-[color:var(--ink-soft)]">Summary</dt>
-                      <dd className="text-[color:var(--ink)]">{verification.summary}</dd>
-                    </div>
-                  ) : null}
-                  {verification.sourceRepo
-                    ? (() => {
-                        const raw = verification.sourceRepo;
-                        const href = /^https?:\/\//.test(raw) ? raw : `https://github.com/${raw}`;
-                        const display = href.replace(/^https?:\/\//, "");
-                        return (
-                          <div className="flex flex-col gap-1.5 border-b border-[color:var(--line)] pb-3 sm:grid sm:grid-cols-[minmax(140px,220px)_1fr] sm:gap-x-4 sm:gap-y-0">
-                            <dt className="font-semibold text-[color:var(--ink-soft)]">Source</dt>
-                            <dd className="text-[color:var(--ink)]">
-                              <a
-                                href={href}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                className="inline-flex max-w-full flex-wrap items-center gap-1 break-all text-[color:var(--accent)] hover:underline"
-                              >
-                                {display}
-                                <ExternalLink className="h-3 w-3" aria-hidden="true" />
-                              </a>
-                            </dd>
-                          </div>
-                        );
-                      })()
-                    : null}
-                  {verification.sourceCommit ? (
-                    <div className="flex flex-col gap-1.5 border-b border-[color:var(--line)] pb-3 sm:grid sm:grid-cols-[minmax(140px,220px)_1fr] sm:gap-x-4 sm:gap-y-0">
-                      <dt className="font-semibold text-[color:var(--ink-soft)]">Commit</dt>
-                      <dd className="min-w-0 break-all font-mono text-xs text-[color:var(--ink)]">
-                        {verification.sourceCommit.slice(0, 12)}
-                      </dd>
-                    </div>
-                  ) : null}
-                  {verification.sourceTag ? (
-                    <div className="flex flex-col gap-1.5 border-b border-[color:var(--line)] pb-3 sm:grid sm:grid-cols-[minmax(140px,220px)_1fr] sm:gap-x-4 sm:gap-y-0">
-                      <dt className="font-semibold text-[color:var(--ink-soft)]">Tag</dt>
-                      <dd className="min-w-0 break-all font-mono text-xs text-[color:var(--ink)]">
-                        {verification.sourceTag}
-                      </dd>
-                    </div>
-                  ) : null}
-                  {verification.hasProvenance !== undefined ? (
-                    <div className="flex flex-col gap-1.5 border-b border-[color:var(--line)] pb-3 sm:grid sm:grid-cols-[minmax(140px,220px)_1fr] sm:gap-x-4 sm:gap-y-0">
-                      <dt className="font-semibold text-[color:var(--ink-soft)]">Provenance</dt>
-                      <dd className="text-[color:var(--ink)]">
-                        {verification.hasProvenance ? "Yes" : "No"}
-                      </dd>
-                    </div>
-                  ) : null}
-                  {verification.scanStatus ? (
-                    <div className="flex flex-col gap-1.5 last:border-b-0 last:pb-0 sm:grid sm:grid-cols-[minmax(140px,220px)_1fr] sm:gap-x-4 sm:gap-y-0">
-                      <dt className="font-semibold text-[color:var(--ink-soft)]">Scan status</dt>
-                      <dd className="text-[color:var(--ink)]">{verification.scanStatus}</dd>
-                    </div>
-                  ) : null}
-                </dl>
-              </CardContent>
-            </Card>
-          ) : null}
-
-          {/* Tags */}
-          {pkg.tags && Object.keys(pkg.tags).length > 0 ? (
-            <Card>
-              <CardHeader>
-                <CardTitle>Tags</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <dl className="flex flex-col gap-3 text-sm">
-                  {Object.entries(pkg.tags).map(([key, value]) => (
-                    <div
-                      key={key}
-                      className="flex flex-col gap-1.5 border-b border-[color:var(--line)] pb-3 last:border-b-0 last:pb-0 sm:grid sm:grid-cols-[minmax(140px,220px)_1fr] sm:gap-x-4 sm:gap-y-0"
-                    >
-                      <dt className="font-semibold text-[color:var(--ink-soft)]">{key}</dt>
-                      <dd className="min-w-0 break-all font-mono text-xs text-[color:var(--ink)]">
-                        {value}
-                      </dd>
-                    </div>
-                  ))}
-                </dl>
-              </CardContent>
-            </Card>
-          ) : null}
+              </div>
+            </CardContent>
+          </Card>
+          <PluginDetailTabs
+            activeTab={activeTab}
+            setActiveTab={setActiveTab}
+            readmePanel={readmePanel}
+            capabilitiesPanel={capabilitiesPanel}
+            compatibilityPanel={compatibilityPanel}
+            verificationPanel={verificationPanel}
+          />
         </DetailHero>
       </DetailPageShell>
     </main>

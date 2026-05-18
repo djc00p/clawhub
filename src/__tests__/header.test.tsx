@@ -2,7 +2,7 @@
 
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -14,7 +14,8 @@ type HeaderAuthStatus = {
 
 const siteModeMock = vi.fn(() => "souls");
 const navigateMock = vi.fn();
-const { useUnifiedSearchMock } = vi.hoisted(() => ({
+const { signInMock, useUnifiedSearchMock } = vi.hoisted(() => ({
+  signInMock: vi.fn(),
   useUnifiedSearchMock: vi.fn(),
 }));
 
@@ -58,6 +59,8 @@ const defaultUnifiedSearchResult = {
   ],
   skillCount: 1,
   pluginCount: 1,
+  skillHasMore: false,
+  pluginHasMore: false,
   isSearching: false,
 };
 
@@ -73,7 +76,7 @@ vi.mock("@tanstack/react-router", () => ({
 
 vi.mock("@convex-dev/auth/react", () => ({
   useAuthActions: () => ({
-    signIn: vi.fn(),
+    signIn: signInMock,
     signOut: vi.fn(),
   }),
 }));
@@ -180,9 +183,16 @@ function stylesCss() {
 
 function compactHeaderCss() {
   const css = stylesCss();
-  const start = css.indexOf("@media (max-width: 760px)");
-  const end = css.indexOf("@media (max-width: 520px)", start);
-  return css.slice(start, end);
+  let start = css.indexOf("@media (max-width: 760px)");
+  while (start >= 0) {
+    const nextMedia = css.indexOf("@media ", start + 1);
+    const block = css.slice(start, nextMedia === -1 ? undefined : nextMedia);
+    if (block.includes(".navbar-search-wrap") && block.includes(".nav-mobile")) {
+      return block;
+    }
+    start = css.indexOf("@media (max-width: 760px)", start + 1);
+  }
+  throw new Error("Missing compact header media query");
 }
 
 describe("Header", () => {
@@ -194,6 +204,8 @@ describe("Header", () => {
     });
     siteModeMock.mockReturnValue("souls");
     useUnifiedSearchMock.mockReturnValue(defaultUnifiedSearchResult);
+    signInMock.mockReset();
+    signInMock.mockResolvedValue({ signingIn: true });
   });
 
   it("hides Packages navigation in soul mode on mobile and desktop", () => {
@@ -220,11 +232,12 @@ describe("Header", () => {
     expect(screen.getByRole("button", { name: "Dark theme" })).toBeTruthy();
     expect(screen.getAllByText("Skills")).toHaveLength(1);
     expect(screen.getAllByText("Plugins")).toHaveLength(1);
-    expect(screen.getAllByText("Users")).toHaveLength(1);
-    expect(screen.getAllByText("About")).toHaveLength(1);
+    expect(screen.getAllByText("Publishers")).toHaveLength(1);
+    expect(screen.getAllByText("Docs")).toHaveLength(1);
+    expect(screen.queryByText("About")).toBeNull();
     expect(screen.queryByText("Dashboard")).toBeNull();
     expect(screen.queryByText("Manage")).toBeNull();
-    expect(screen.getByPlaceholderText("Search skills, plugins, users")).toBeTruthy();
+    expect(screen.getByPlaceholderText("Search skills and plugins")).toBeTruthy();
 
     fireEvent.click(screen.getByRole("button", { name: /Cycle theme mode/i }));
     expect(setModeMock).toHaveBeenCalledWith("light");
@@ -234,8 +247,9 @@ describe("Header", () => {
     expect(screen.getAllByText("Home")).toHaveLength(1);
     expect(screen.getAllByText("Skills")).toHaveLength(2);
     expect(screen.getAllByText("Plugins")).toHaveLength(2);
-    expect(screen.getAllByText("Users")).toHaveLength(2);
-    expect(screen.getAllByText("About")).toHaveLength(2);
+    expect(screen.getAllByText("Publishers")).toHaveLength(2);
+    expect(screen.getAllByText("Docs")).toHaveLength(2);
+    expect(screen.queryByText("About")).toBeNull();
   });
 
   it("renders the GitHub sign-in button with desktop and compact labels", () => {
@@ -252,7 +266,22 @@ describe("Header", () => {
     expect(signInButton.querySelector(".sign-in-compact-copy")?.textContent).toBe("GitHub");
   });
 
-  it("keeps inline search and content nav visible in the compact header", () => {
+  it("shows an auth error when the GitHub sign-in request does not start", async () => {
+    const { setAuthError } = await import("../lib/useAuthError");
+    siteModeMock.mockReturnValue("skills");
+    signInMock.mockResolvedValue({ signingIn: false });
+
+    render(<Header />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Sign in with GitHub" }));
+
+    expect(signInMock).toHaveBeenCalledWith("github", { redirectTo: "/" });
+    await waitFor(() => {
+      expect(setAuthError).toHaveBeenCalledWith("Sign in failed. Please try again.");
+    });
+  });
+
+  it("keeps inline search and moves content nav into the compact menu", () => {
     const css = compactHeaderCss();
 
     expect(css).toContain(".navbar-search-wrap");
@@ -262,11 +291,10 @@ describe("Header", () => {
     expect(css).toContain(".navbar-search-mobile-trigger");
     expect(css).toContain("display: none;");
     expect(css).toContain(".navbar-tabs {");
-    expect(css).toContain("display: flex;");
-    expect(css).toContain(".navbar-tabs-secondary");
+    expect(css).toContain("display: none;");
+    expect(css).toContain(".nav-mobile {");
     expect(css).toContain("display: inline-flex;");
     expect(css).not.toContain(".navbar-search {\n    display: none;");
-    expect(css).not.toContain(".navbar-tabs {\n    display: none;");
   });
 
   it("aligns the restored header shell to the browse page width", () => {
@@ -275,8 +303,8 @@ describe("Header", () => {
 
     expect(css).toContain(".navbar-inner {\n  width: 100%;\n  max-width: var(--page-max);");
     expect(css).toContain("margin: 0 auto;\n  padding: 0 var(--space-5);");
-    expect(compactCss).toContain("padding: 10px 16px;");
-    expect(compactCss).toContain("scroll-padding-inline: 16px;");
+    expect(compactCss).toContain("padding: 8px 10px;");
+    expect(compactCss).toContain(".navbar-tabs {\n    display: none;");
     expect(css).not.toContain(".navbar-inner,\n  .section.detail-page-section");
   });
 
@@ -286,16 +314,23 @@ describe("Header", () => {
 
     render(<Header />);
 
-    const input = screen.getByPlaceholderText("Search skills, plugins, users");
+    const input = screen.getByPlaceholderText("Search skills and plugins");
     fireEvent.focus(input);
     fireEvent.change(input, { target: { value: "weather" } });
 
     const typeahead = screen.getByRole("listbox");
     expect(within(typeahead).getByText("Skills")).toBeTruthy();
     expect(screen.getByText("Weather Skill")).toBeTruthy();
+    expect(screen.getByText("@local / weather")).toBeTruthy();
     expect(within(typeahead).getByText("Plugins")).toBeTruthy();
     expect(screen.getByText("Weather Plugin")).toBeTruthy();
-    expect(within(typeahead).queryByText("Users")).toBeNull();
+    expect(input.getAttribute("role")).toBe("combobox");
+    expect(input.getAttribute("aria-autocomplete")).toBe("list");
+    expect(input.getAttribute("aria-expanded")).toBe("true");
+    const activeDescendant = input.getAttribute("aria-activedescendant");
+    expect(activeDescendant).toBeTruthy();
+    expect(document.getElementById(activeDescendant ?? "")).toBeTruthy();
+    expect(within(typeahead).queryByText("Publishers")).toBeNull();
     expect(within(typeahead).queryByText('See user results for "weather"')).toBeNull();
 
     fireEvent.keyDown(input, { key: "ArrowDown" });
@@ -329,7 +364,7 @@ describe("Header", () => {
 
     render(<Header />);
 
-    const input = screen.getByPlaceholderText("Search skills, plugins, users");
+    const input = screen.getByPlaceholderText("Search skills and plugins");
     fireEvent.focus(input);
     fireEvent.change(input, { target: { value: "weather" } });
     fireEvent.click(screen.getByRole("option", { name: /Weather Skill/i }));
@@ -353,12 +388,14 @@ describe("Header", () => {
       pluginResults: [],
       skillCount: 0,
       pluginCount: 0,
+      skillHasMore: false,
+      pluginHasMore: false,
       isSearching: false,
     });
 
     render(<Header />);
 
-    const input = screen.getByPlaceholderText("Search skills, plugins, users");
+    const input = screen.getByPlaceholderText("Search skills and plugins");
     fireEvent.focus(input);
     fireEvent.change(input, { target: { value: "zzzz" } });
 
@@ -384,9 +421,10 @@ describe("Header", () => {
       .filter((label): label is string => Boolean(label));
 
     expect(labels.slice(0, 2)).toEqual(["Home", "Skills"]);
+    expect(labels.slice(3, 5)).toEqual(["Publishers", "Docs"]);
   });
 
-  it("keeps Stars out of signed-in header navigation", () => {
+  it("links starred skills from the signed-in avatar menu", () => {
     siteModeMock.mockReturnValue("skills");
     authStatusMock.mockReturnValue({
       isAuthenticated: true,
@@ -402,7 +440,7 @@ describe("Header", () => {
 
     render(<Header />);
 
-    expect(screen.queryByText("Stars")).toBeNull();
+    expect(screen.getByText("Stars").closest("a")?.getAttribute("href")).toBe("/stars");
     expect(screen.getAllByText("Dashboard").length).toBeGreaterThan(0);
     expect(screen.getByText("Settings")).toBeTruthy();
   });

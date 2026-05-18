@@ -1,17 +1,20 @@
 import type { RefObject } from "react";
+import { BrowseResultsSkeleton } from "../../components/skeletons/BrowseResultsSkeleton";
 import { SkillCard } from "../../components/SkillCard";
-import { SkillListItem } from "../../components/SkillListItem";
 import { getPlatformLabels } from "../../components/skillDetailUtils";
+import { SkillListItem } from "../../components/SkillListItem";
 import { SkillStatsTripletLine } from "../../components/SkillStats";
 import { Button } from "../../components/ui/button";
 import { UserBadge } from "../../components/UserBadge";
 import { getSkillBadges } from "../../lib/badges";
+import { timeAgo } from "../../lib/timeAgo";
 import { buildSkillHref, type SkillListEntry } from "./-types";
+import type { SkillsView } from "./-useSkillsBrowseModel";
 
 type SkillsResultsProps = {
   isLoadingSkills: boolean;
   sorted: SkillListEntry[];
-  view: "cards" | "list";
+  view: SkillsView;
   listDoneLoading: boolean;
   hasQuery: boolean;
   canLoadMore: boolean;
@@ -36,26 +39,17 @@ export function SkillsResults({
   return (
     <>
       {isLoadingSkills ? (
-        <div className="skeleton-list">
-          {Array.from({ length: 6 }, (_, i) => (
-            <div key={i} className="skeleton-row">
-              <div className="skeleton-icon" />
-              <div className="skeleton-row-body">
-                <div className="skeleton-bar skeleton-bar-lg" />
-                <div className="skeleton-bar skeleton-bar-sm" />
-                <div className="skeleton-bar skeleton-bar-xs" />
-              </div>
-            </div>
-          ))}
-        </div>
+        <BrowseResultsSkeleton variant={view} />
       ) : sorted.length === 0 ? (
         <div className="empty-state">
           <p className="empty-state-title">No skills found</p>
           <p className="empty-state-body">
-            {hasQuery ? "Try a different search term or remove filters." : "No skills have been published yet."}
+            {hasQuery
+              ? "Try a different search term or remove filters."
+              : "No skills have been published yet."}
           </p>
         </div>
-      ) : view === "cards" ? (
+      ) : view === "grid" ? (
         <div className="grid">
           {sorted.map((entry) => {
             const skill = entry.skill;
@@ -69,6 +63,7 @@ export function SkillsResults({
                 key={skill._id}
                 skill={skill}
                 href={skillHref}
+                className="skill-card-spaced-footer"
                 badge={getSkillBadges(skill)}
                 chip={isPlugin ? "Plugin bundle (nix)" : undefined}
                 platformLabels={platforms.length ? platforms : undefined}
@@ -82,7 +77,12 @@ export function SkillsResults({
                       link={false}
                     />
                     <div className="stat">
-                      <SkillStatsTripletLine stats={skill.stats} />
+                      <div className="skill-card-statline">
+                        <span className="skill-card-updated">
+                          Updated {timeAgo(skill.updatedAt)}
+                        </span>
+                        <SkillStatsTripletLine stats={skill.stats} />
+                      </div>
                     </div>
                   </div>
                 }
@@ -107,20 +107,17 @@ export function SkillsResults({
         </div>
       )}
 
-      {canLoadMore || isLoadingMore ? (
-        <div
-          ref={canAutoLoad ? loadMoreRef : null}
-          className="card mt-4 flex justify-center"
-        >
+      {isLoadingMore ? (
+        <div ref={canAutoLoad ? loadMoreRef : null} className="mt-4">
+          <BrowseResultsSkeleton count={2} variant={view} />
+        </div>
+      ) : canLoadMore ? (
+        <div ref={canAutoLoad ? loadMoreRef : null} className="card mt-4 flex justify-center">
           {canAutoLoad ? (
-            isLoadingMore ? (
-              "Loading more..."
-            ) : (
-              "Scroll to load more"
-            )
+            "Scroll to load more"
           ) : (
             <Button type="button" onClick={loadMore} disabled={isLoadingMore}>
-              {isLoadingMore ? "Loading..." : "Load more"}
+              Load more
             </Button>
           )}
         </div>

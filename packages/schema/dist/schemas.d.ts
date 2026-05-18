@@ -20,6 +20,8 @@ export declare const LockfileSchema: import("arktype/internal/variants/object.ts
         [x: string]: {
             version: string | null;
             installedAt: number;
+            pinned?: boolean | undefined;
+            pinReason?: string | undefined;
         };
     };
 }, {}>;
@@ -78,6 +80,9 @@ export declare const CliPublishRequestSchema: import("arktype/internal/variants/
         sha256: string;
         contentType?: string | undefined;
     }[];
+    ownerHandle?: string | undefined;
+    migrateOwner?: boolean | undefined;
+    clawScanNote?: string | undefined;
     acceptLicenseTerms?: boolean | undefined;
     tags?: string[] | undefined;
     source?: {
@@ -107,6 +112,7 @@ export declare const CliSkillDeleteRequestSchema: import("arktype/internal/varia
 export type CliSkillDeleteRequest = (typeof CliSkillDeleteRequestSchema)[inferred];
 export declare const ApiCliSkillDeleteResponseSchema: import("arktype/internal/variants/object.ts").ObjectType<{
     ok: true;
+    slugReservedUntil?: number | undefined;
 }, {}>;
 export declare const ApiSkillResolveResponseSchema: import("arktype/internal/variants/object.ts").ObjectType<{
     match: {
@@ -156,6 +162,12 @@ export declare const ApiV1SearchResponseSchema: import("arktype/internal/variant
         summary?: string | null | undefined;
         version?: string | null | undefined;
         updatedAt?: number | undefined;
+        ownerHandle?: string | null | undefined;
+        owner?: {
+            handle?: string | null | undefined;
+            displayName?: string | null | undefined;
+            image?: string | null | undefined;
+        } | null | undefined;
     }[];
 }, {}>;
 export declare const ApiV1SkillListResponseSchema: import("arktype/internal/variants/object.ts").ObjectType<{
@@ -227,6 +239,120 @@ export declare const ApiV1SkillModerationResponseSchema: import("arktype/interna
         legacyReason?: string | null | undefined;
     } | null;
 }, {}>;
+export declare const SkillReportStatusSchema: import("arktype/internal/variants/string.ts").StringType<"open" | "confirmed" | "dismissed", {}>;
+export type SkillReportStatus = (typeof SkillReportStatusSchema)[inferred];
+export declare const SkillReportFinalActionSchema: import("arktype/internal/variants/string.ts").StringType<"none" | "hide", {}>;
+export type SkillReportFinalAction = (typeof SkillReportFinalActionSchema)[inferred];
+export declare const SkillReportListStatusSchema: import("arktype/internal/variants/string.ts").StringType<"open" | "confirmed" | "dismissed" | "all", {}>;
+export type SkillReportListStatus = (typeof SkillReportListStatusSchema)[inferred];
+export declare const SkillAppealStatusSchema: import("arktype/internal/variants/string.ts").StringType<"open" | "accepted" | "rejected", {}>;
+export type SkillAppealStatus = (typeof SkillAppealStatusSchema)[inferred];
+export declare const SkillAppealFinalActionSchema: import("arktype/internal/variants/string.ts").StringType<"none" | "restore", {}>;
+export type SkillAppealFinalAction = (typeof SkillAppealFinalActionSchema)[inferred];
+export declare const SkillAppealListStatusSchema: import("arktype/internal/variants/string.ts").StringType<"open" | "all" | "accepted" | "rejected", {}>;
+export type SkillAppealListStatus = (typeof SkillAppealListStatusSchema)[inferred];
+export declare const SkillAppealRequestSchema: import("arktype/internal/variants/object.ts").ObjectType<{
+    message: string;
+    version?: string | undefined;
+}, {}>;
+export type SkillAppealRequest = (typeof SkillAppealRequestSchema)[inferred];
+export declare const ApiV1SkillReportResponseSchema: import("arktype/internal/variants/object.ts").ObjectType<{
+    ok: true;
+    reported: boolean;
+    alreadyReported: boolean;
+    reportId: string;
+    skillId: string;
+    reportCount: number;
+}, {}>;
+export type ApiV1SkillReportResponse = (typeof ApiV1SkillReportResponseSchema)[inferred];
+export declare const ApiV1SkillAppealResponseSchema: import("arktype/internal/variants/object.ts").ObjectType<{
+    ok: true;
+    submitted: boolean;
+    alreadyOpen: boolean;
+    appealId: string;
+    skillId: string;
+    status: "open" | "accepted" | "rejected";
+}, {}>;
+export type ApiV1SkillAppealResponse = (typeof ApiV1SkillAppealResponseSchema)[inferred];
+export declare const SkillReportTriageRequestSchema: import("arktype/internal/variants/object.ts").ObjectType<{
+    status: "open" | "confirmed" | "dismissed";
+    note?: string | undefined;
+    finalAction?: "none" | "hide" | undefined;
+}, {}>;
+export type SkillReportTriageRequest = (typeof SkillReportTriageRequestSchema)[inferred];
+export declare const SkillAppealResolveRequestSchema: import("arktype/internal/variants/object.ts").ObjectType<{
+    status: "open" | "accepted" | "rejected";
+    note?: string | undefined;
+    finalAction?: "none" | "restore" | undefined;
+}, {}>;
+export type SkillAppealResolveRequest = (typeof SkillAppealResolveRequestSchema)[inferred];
+export declare const ApiV1SkillReportListResponseSchema: import("arktype/internal/variants/object.ts").ObjectType<{
+    items: {
+        reportId: string;
+        skillId: string;
+        slug: string;
+        displayName: string;
+        status: "open" | "confirmed" | "dismissed";
+        createdAt: number;
+        reporter: {
+            userId: string;
+            handle?: string | null | undefined;
+            displayName?: string | null | undefined;
+        };
+        skillVersionId?: string | null | undefined;
+        version?: string | null | undefined;
+        reason?: string | null | undefined;
+        triagedAt?: number | null | undefined;
+        triagedBy?: string | null | undefined;
+        triageNote?: string | null | undefined;
+        actionTaken?: "none" | "hide" | null | undefined;
+    }[];
+    nextCursor: string | null;
+    done: boolean;
+}, {}>;
+export type ApiV1SkillReportListResponse = (typeof ApiV1SkillReportListResponseSchema)[inferred];
+export declare const ApiV1SkillReportTriageResponseSchema: import("arktype/internal/variants/object.ts").ObjectType<{
+    ok: true;
+    reportId: string;
+    skillId: string;
+    status: "open" | "confirmed" | "dismissed";
+    reportCount: number;
+    actionTaken?: "none" | "hide" | undefined;
+}, {}>;
+export type ApiV1SkillReportTriageResponse = (typeof ApiV1SkillReportTriageResponseSchema)[inferred];
+export declare const ApiV1SkillAppealListResponseSchema: import("arktype/internal/variants/object.ts").ObjectType<{
+    items: {
+        appealId: string;
+        skillId: string;
+        slug: string;
+        displayName: string;
+        message: string;
+        status: "open" | "accepted" | "rejected";
+        createdAt: number;
+        submitter: {
+            userId: string;
+            handle?: string | null | undefined;
+            displayName?: string | null | undefined;
+        };
+        skillVersionId?: string | null | undefined;
+        version?: string | null | undefined;
+        resolvedAt?: number | null | undefined;
+        resolvedBy?: string | null | undefined;
+        resolutionNote?: string | null | undefined;
+        actionTaken?: "none" | "restore" | null | undefined;
+    }[];
+    nextCursor: string | null;
+    done: boolean;
+}, {}>;
+export type ApiV1SkillAppealListResponse = (typeof ApiV1SkillAppealListResponseSchema)[inferred];
+export declare const ApiV1SkillAppealResolveResponseSchema: import("arktype/internal/variants/object.ts").ObjectType<{
+    ok: true;
+    appealId: string;
+    skillId: string;
+    status: "open" | "accepted" | "rejected";
+    actionTaken?: "none" | "restore" | undefined;
+}, {}>;
+export type ApiV1SkillAppealResolveResponse = (typeof ApiV1SkillAppealResolveResponseSchema)[inferred];
 export declare const ApiV1SkillVersionListResponseSchema: import("arktype/internal/variants/object.ts").ObjectType<{
     items: {
         version: string;
@@ -277,18 +403,8 @@ export declare const ApiV1PublishResponseSchema: import("arktype/internal/varian
 }, {}>;
 export declare const ApiV1DeleteResponseSchema: import("arktype/internal/variants/object.ts").ObjectType<{
     ok: true;
+    slugReservedUntil?: number | undefined;
 }, {}>;
-export declare const ApiV1RescanResponseSchema: import("arktype/internal/variants/object.ts").ObjectType<{
-    ok: true;
-    targetKind: "skill" | "package";
-    name: string;
-    version: string;
-    status: "in_progress" | "completed" | "failed";
-    remainingRequests: number;
-    maxRequests: number;
-    pendingRequestId?: string | undefined;
-}, {}>;
-export type ApiV1RescanResponse = (typeof ApiV1RescanResponseSchema)[inferred];
 export declare const ApiV1SkillRenameResponseSchema: import("arktype/internal/variants/object.ts").ObjectType<{
     ok: true;
     slug: string;
@@ -301,9 +417,12 @@ export declare const ApiV1SkillMergeResponseSchema: import("arktype/internal/var
 }, {}>;
 export declare const ApiV1TransferRequestResponseSchema: import("arktype/internal/variants/object.ts").ObjectType<{
     ok: true;
-    transferId: string;
-    toUserHandle: string;
-    expiresAt: number;
+    transferId?: string | undefined;
+    toUserHandle?: string | undefined;
+    toPublisherHandle?: string | undefined;
+    skillSlug?: string | undefined;
+    expiresAt?: number | undefined;
+    transferred?: boolean | undefined;
 }, {}>;
 export declare const ApiV1TransferDecisionResponseSchema: import("arktype/internal/variants/object.ts").ObjectType<{
     ok: true;

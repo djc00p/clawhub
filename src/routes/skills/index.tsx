@@ -8,7 +8,11 @@ import { SKILL_CATEGORIES } from "../../lib/categories";
 import { formatCompactStat } from "../../lib/numberFormat";
 import { parseDir, parseSort } from "./-params";
 import { SkillsResults } from "./-SkillsResults";
-import { useSkillsBrowseModel, type SkillsSearchState } from "./-useSkillsBrowseModel";
+import {
+  normalizeSkillsView,
+  useSkillsBrowseModel,
+  type SkillsSearchState,
+} from "./-useSkillsBrowseModel";
 
 const SORT_OPTIONS = [
   { value: "downloads", label: "Most downloaded" },
@@ -33,19 +37,13 @@ export const Route = createFileRoute("/skills/")({
         search.featured === "1" || search.featured === "true" || search.featured === true
           ? true
           : undefined,
-      nonSuspicious:
-        search.nonSuspicious === "1" ||
-        search.nonSuspicious === "true" ||
-        search.nonSuspicious === true
-          ? true
-          : undefined,
-      view: search.view === "cards" || search.view === "list" ? search.view : undefined,
+      view: normalizeSkillsView(search.view),
       focus: search.focus === "search" ? "search" : undefined,
     };
   },
   beforeLoad: ({ search }) => {
     const hasQuery = Boolean(search.q?.trim());
-    if (hasQuery || search.sort || search.featured || search.highlighted || search.nonSuspicious) {
+    if (hasQuery || search.sort || search.featured || search.highlighted) {
       return;
     }
     throw redirect({
@@ -56,7 +54,6 @@ export const Route = createFileRoute("/skills/")({
         dir: search.dir || undefined,
         highlighted: search.highlighted || undefined,
         featured: search.featured || undefined,
-        nonSuspicious: search.nonSuspicious || undefined,
         view: search.view || undefined,
         focus: search.focus || undefined,
       },
@@ -84,13 +81,6 @@ export function SkillsIndex() {
     ? [{ value: "relevance", label: "Relevance" }, ...SORT_OPTIONS]
     : SORT_OPTIONS;
 
-  const handleFilterToggle = useCallback(
-    (key: string) => {
-      if (key === "nonSuspicious") model.onToggleNonSuspicious();
-    },
-    [model.onToggleNonSuspicious],
-  );
-
   const handleSortChange = useCallback(
     (value: string) => {
       if (value === "featured") {
@@ -101,7 +91,7 @@ export function SkillsIndex() {
       if (model.featuredOnly) {
         const nextSort = parseSort(value);
         void navigate({
-          search: (prev) => ({
+          search: (prev: SkillsSearchState) => ({
             ...prev,
             sort: nextSort,
             dir: parseDir(prev.dir, nextSort),
@@ -121,14 +111,7 @@ export function SkillsIndex() {
   const handleClear = useCallback(() => {
     model.onQueryChange("");
     if (model.featuredOnly) model.onToggleFeatured();
-    if (model.nonSuspiciousOnly) model.onToggleNonSuspicious();
-  }, [
-    model.featuredOnly,
-    model.onQueryChange,
-    model.onToggleFeatured,
-    model.onToggleNonSuspicious,
-    model.nonSuspiciousOnly,
-  ]);
+  }, [model.featuredOnly, model.onQueryChange, model.onToggleFeatured]);
 
   const handleCategoryChange = useCallback(
     (slug: string | undefined) => {
@@ -186,36 +169,34 @@ export function SkillsIndex() {
           sortOptions={[{ value: "featured", label: "Featured" }, ...sortOptionsWithRelevance]}
           activeSort={model.featuredOnly ? "featured" : model.sort}
           onSortChange={handleSortChange}
-          filters={[
-            { key: "nonSuspicious", label: "Hide suspicious", active: model.nonSuspiciousOnly },
-          ]}
-          onFilterToggle={handleFilterToggle}
         />
         <div className="browse-results">
           <div className="browse-results-toolbar">
             <span className="browse-results-count">
               {model.isLoadingSkills ? "\u2014" : `${model.sorted.length} results`}
-              {model.hasQuery || model.featuredOnly || model.nonSuspiciousOnly ? (
+              {model.hasQuery || model.featuredOnly ? (
                 <button className="browse-clear-btn" type="button" onClick={handleClear}>
                   Clear
                 </button>
               ) : null}
             </span>
-            <div className="browse-view-toggle">
-              <button
-                className={`browse-view-btn${model.view === "list" ? " is-active" : ""}`}
-                type="button"
-                onClick={model.view === "cards" ? model.onToggleView : undefined}
-              >
-                List
-              </button>
-              <button
-                className={`browse-view-btn${model.view === "cards" ? " is-active" : ""}`}
-                type="button"
-                onClick={model.view === "list" ? model.onToggleView : undefined}
-              >
-                Cards
-              </button>
+            <div className="browse-results-actions">
+              <div className="browse-view-toggle">
+                <button
+                  className={`browse-view-btn${model.view === "list" ? " is-active" : ""}`}
+                  type="button"
+                  onClick={model.view === "grid" ? model.onToggleView : undefined}
+                >
+                  List
+                </button>
+                <button
+                  className={`browse-view-btn${model.view === "grid" ? " is-active" : ""}`}
+                  type="button"
+                  onClick={model.view === "list" ? model.onToggleView : undefined}
+                >
+                  Grid
+                </button>
+              </div>
             </div>
           </div>
           <SkillsResults

@@ -12,9 +12,10 @@ export type ModerationFinding = {
   evidence: string;
 };
 
-export const MODERATION_ENGINE_VERSION = "v2.4.22";
+export const MODERATION_ENGINE_VERSION = "v2.4.24";
 
 export const REASON_CODES = {
+  LLM_REVIEW: "review.llm_review",
   DANGEROUS_EXEC: "suspicious.dangerous_exec",
   DYNAMIC_CODE: "suspicious.dynamic_code_execution",
   GENERATED_SOURCE_TEMPLATE: "suspicious.generated_source_template_injection",
@@ -32,6 +33,7 @@ export const REASON_CODES = {
   AUTONOMOUS_CREDENTIAL_EGRESS: "suspicious.autonomous_credential_egress",
   HARDCODED_OPERATOR_BILLING: "suspicious.hardcoded_operator_billing",
   REMOTE_RECIPE_EXECUTION: "suspicious.remote_recipe_execution",
+  CONFIRMATION_BYPASS: "suspicious.confirmation_bypass",
   CREDENTIAL_HARVEST: "suspicious.env_credential_access",
   EXFILTRATION: "suspicious.potential_exfiltration",
   OBFUSCATED_CODE: "suspicious.obfuscated_code",
@@ -42,6 +44,7 @@ export const REASON_CODES = {
   MANIFEST_PRIVILEGED_ALWAYS: "suspicious.privileged_always",
   MALICIOUS_INSTALL_PROMPT: "malicious.install_terminal_payload",
   KNOWN_BLOCKED_SIGNATURE: "malicious.known_blocked_signature",
+  STEALTH_BROWSER_ABUSE: "malicious.stealth_browser_abuse",
   DEP_NOT_FOUND: "suspicious.dep_not_found_on_registry",
 } as const;
 
@@ -49,6 +52,7 @@ const MALICIOUS_CODES = new Set<string>([
   REASON_CODES.CRYPTO_MINING,
   REASON_CODES.MALICIOUS_INSTALL_PROMPT,
   REASON_CODES.KNOWN_BLOCKED_SIGNATURE,
+  REASON_CODES.STEALTH_BROWSER_ABUSE,
 ]);
 
 const EXTERNALLY_CLEARABLE_SUSPICIOUS_CODES = new Set<string>([REASON_CODES.CREDENTIAL_HARVEST]);
@@ -65,6 +69,7 @@ export function summarizeReasonCodes(codes: string[]) {
   if (codes.length === 0) return "No suspicious patterns detected.";
   const top = codes.slice(0, 3).join(", ");
   const extra = codes.length > 3 ? ` (+${codes.length - 3} more)` : "";
+  if (codes.every((code) => code.startsWith("review."))) return `Review: ${top}${extra}`;
   return `Detected: ${top}${extra}`;
 }
 
@@ -73,7 +78,7 @@ export function verdictFromCodes(codes: string[]): ScannerModerationVerdict {
   if (normalized.some((code) => MALICIOUS_CODES.has(code) || code.startsWith("malicious."))) {
     return "malicious";
   }
-  if (normalized.length > 0) return "suspicious";
+  if (normalized.some((code) => code.startsWith("suspicious."))) return "suspicious";
   return "clean";
 }
 

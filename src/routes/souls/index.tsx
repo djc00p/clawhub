@@ -71,7 +71,6 @@ function SoulsHoldingPage() {
                 sort: "downloads",
                 dir: "desc",
                 highlighted: undefined,
-                nonSuspicious: true,
                 view: undefined,
                 focus: undefined,
               }}
@@ -80,7 +79,7 @@ function SoulsHoldingPage() {
             </Link>
           </Button>
           <Button asChild>
-            <Link to="/users">Browse Users</Link>
+            <Link to="/publishers">Browse Publishers</Link>
           </Button>
         </div>
       </section>

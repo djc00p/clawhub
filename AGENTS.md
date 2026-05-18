@@ -5,8 +5,16 @@
 - `src/` — TanStack Start app code (routes, components, styles).
 - `convex/` — Convex backend (schema, queries/mutations/actions, HTTP routes).
 - `convex/_generated/` — generated Convex API/types; committed for builds.
-- `docs/` — product/spec docs (see `docs/spec.md`).
+- `docs/` — publishable public/operator docs for the ClawHub docs tab.
+- `specs/` — product specs, plans, regression notes, design history (see `specs/spec.md`).
 - `public/` — static assets.
+
+## Durable Intent & Specs
+
+- Use `specs/` to persist system/subsystem intent, invariants, and design rationale that future agents should preserve.
+- Keep intended behavior for security-sensitive flows there, especially moderation, upload gating, scanner outcomes, appeals, bans, ownership, package installability, and API trust boundaries.
+- If code changes reveal or change how a subsystem is supposed to work, update the relevant spec or add a focused spec note instead of burying the intent only in PR text or public docs.
+- Keep `docs/` user/operator-facing: explain current behavior and commands there, but put internal “why this must work this way” context in `specs/`.
 
 ## Build, Test, and Development Commands
 
@@ -26,6 +34,7 @@
 - Indentation: 2 spaces, single quotes (Biome).
 - Lint/format: Biome + oxlint (type-aware).
 - Convex function names: verb-first (`getBySlug`, `publishVersion`).
+- Inline code comments: add brief comments for tricky, bug-prone, or previously buggy logic.
 
 ## Testing Guidelines
 
@@ -38,7 +47,8 @@
 
 - Commit messages: Conventional Commits (`feat:`, `fix:`, `chore:`, `docs:`…).
 - Keep changes scoped; avoid repo-wide search/replace.
-- Before commit/PR handoff, run `bun run format:check` and `bun run lint`; include commands run in the PR summary.
+- Before commit/PR handoff, run `bun run ci:static` so formatting, linting, audit/peer checks, and dead-code export checks match the CI `static` job. For faster inner loops, targeted `bun run format:check -- <files>` / `bun run lint` are fine, but do not treat them as the final pre-push gate.
+- Before opening a PR for source or test changes, run the targeted tests for the touched behavior and `bun run ci:unit` (`VITE_CONVEX_URL=https://example.invalid bun run coverage`) unless the change is docs/config-only or the user explicitly asks to rely on CI. For runtime, build, or package changes, also run the matching broader gate when it covers the touched surface: `bun run ci:types-build`, `bun run ci:packages`, `bun run ci:e2e-http`, or `bun run ci:playwright-smoke`.
 - PRs: include summary + test commands run. Add screenshots for UI changes.
 - Before merging any PR, verify TypeScript cleanly with `bunx tsc -p packages/schema/tsconfig.json --noEmit` and `bunx tsc -p packages/clawhub/tsconfig.json --noEmit`; if Convex code changed, also run the repo typecheck path used by deploy so `bunx convex deploy` will not fail on `tsc`.
 - GitHub comments: for multiline `gh` comments/close messages, use `--body-file`, `--input`, or stdin/heredoc with real newlines; never pass literal `\\n` in shell strings.

@@ -9,8 +9,10 @@ import {
   getOptionalActiveAuthUserId,
   requireUser,
 } from "./lib/access";
+import { isLocalDevAuthEnabled } from "./lib/devAuth";
 import { syncGitHubProfile } from "./lib/githubAccount";
 import { toPublicUser } from "./lib/public";
+import { isReservedPublicOwnerHandle } from "./lib/publicRouteReservations";
 import {
   ensurePersonalPublisherForUser,
   getActiveUserByHandleOrPersonalPublisher,
@@ -31,6 +33,27 @@ const ADMIN_HANDLE = "steipete";
 const MAX_USER_LIST_LIMIT = 200;
 const MAX_USER_SEARCH_SCAN = 5_000;
 const MIN_USER_SEARCH_SCAN = 500;
+const DEV_PERSONA_GITHUB_CREATED_AT = Date.UTC(2020, 0, 1);
+
+const DEV_PERSONAS = {
+  owner: {
+    handle: "local",
+    displayName: "Local Owner",
+    role: "user",
+  },
+  user: {
+    handle: "local-user",
+    displayName: "Local User",
+    role: "user",
+  },
+  admin: {
+    handle: "local-admin",
+    displayName: "Local Admin",
+    role: "admin",
+  },
+} as const;
+
+type DevPersona = keyof typeof DEV_PERSONAS;
 
 export const getById = query({
   args: { userId: v.id("users") },
@@ -40,6 +63,45 @@ export const getById = query({
 export const getByIdInternal = internalQuery({
   args: { userId: v.id("users") },
   handler: async (ctx, args) => ctx.db.get(args.userId),
+});
+
+export const upsertDevPersonaInternal = internalMutation({
+  args: { persona: v.union(v.literal("owner"), v.literal("user"), v.literal("admin")) },
+  handler: async (ctx, args): Promise<Id<"users">> => {
+    if (!isLocalDevAuthEnabled()) throw new Error("Dev auth is disabled");
+
+    const persona = DEV_PERSONAS[args.persona as DevPersona];
+    const now = Date.now();
+    const existing = await getUserByHandleOrPersonalPublisher(ctx, persona.handle);
+    const patch = {
+      handle: persona.handle,
+      displayName: persona.displayName,
+      name: persona.displayName,
+      role: persona.role,
+      githubCreatedAt: DEV_PERSONA_GITHUB_CREATED_AT,
+      deletedAt: undefined,
+      deactivatedAt: undefined,
+      purgedAt: undefined,
+      banReason: undefined,
+      updatedAt: now,
+    };
+    const userId =
+      existing?._id ??
+      (await ctx.db.insert("users", {
+        ...patch,
+        createdAt: now,
+      }));
+    if (existing) {
+      await ctx.db.patch(existing._id, patch);
+    }
+    const user = await ctx.db.get(userId);
+    if (!user) throw new Error("Dev persona was not created");
+    await ensurePersonalPublisherForUser(ctx, user, {
+      actorUserId: user._id,
+      source: "dev_persona.upsert",
+    });
+    return userId;
+  },
 });
 
 export const getByHandleInternal = internalQuery({
@@ -164,8 +226,35 @@ export const syncGitHubProfileInternal = internalMutation({
       updates.updatedAt = Date.now();
     }
     await ctx.db.patch(args.userId, updates);
+    if (didChangeProfile) {
+      await ctx.db.insert("auditLogs", {
+        actorUserId: args.userId,
+        action: "user.profile.sync",
+        targetType: "user",
+        targetId: args.userId,
+        metadata: {
+          source: "github",
+          previous: {
+            name: user.name ?? null,
+            handle: user.handle ?? null,
+            displayName: user.displayName ?? null,
+            image: user.image ?? null,
+          },
+          next: {
+            name: updates.name ?? user.name ?? null,
+            handle: updates.handle ?? user.handle ?? null,
+            displayName: updates.displayName ?? user.displayName ?? null,
+            image: updates.image ?? user.image ?? null,
+          },
+        },
+        createdAt: updates.updatedAt ?? args.syncedAt,
+      });
+    }
     const nextUser = didChangeProfile ? ({ ...user, ...updates } as Doc<"users">) : user;
-    await ensurePersonalPublisherForUser(ctx, nextUser);
+    await ensurePersonalPublisherForUser(ctx, nextUser, {
+      actorUserId: args.userId,
+      source: "user.profile.sync",
+    });
   },
 });
 
@@ -233,6 +322,7 @@ async function canUserClaimHandle(
 ) {
   const normalizedHandle = normalizeReservedHandle(handle);
   if (!normalizedHandle) return false;
+  if (isReservedPublicOwnerHandle(normalizedHandle)) return false;
   if (await isHandleReservedForAnotherUser(ctx, normalizedHandle, userId)) return false;
 
   const publisher = await getPublisherByHandle(ctx, normalizedHandle);
@@ -304,7 +394,27 @@ export async function ensureHandler(ctx: MutationCtx) {
   const ensuredUser = hasUpdates
     ? ({ ...user, ...updates } as Doc<"users">)
     : ((await ctx.db.get(userId)) ?? user);
-  await ensurePersonalPublisherForUser(ctx, ensuredUser);
+  await ensurePersonalPublisherForUser(
+    ctx,
+    ensuredUser,
+    {
+      actorUserId: userId,
+      source: "user.ensure",
+    },
+    { handleConflict: "skip" },
+  );
+  if (hasUpdates) {
+    await ctx.db.insert("auditLogs", {
+      actorUserId: userId,
+      action: "user.profile.ensure",
+      targetType: "user",
+      targetId: userId,
+      metadata: {
+        changedFields: Object.keys(updates).filter((field) => field !== "updatedAt"),
+      },
+      createdAt: updates.updatedAt as number,
+    });
+  }
   return await ctx.db.get(userId);
 }
 
@@ -315,14 +425,43 @@ export const updateProfile = mutation({
   },
   handler: async (ctx, args) => {
     const { userId } = await requireUser(ctx);
-    await ctx.db.patch(userId, {
-      displayName: args.displayName.trim(),
-      bio: args.bio?.trim(),
-      updatedAt: Date.now(),
-    });
     const user = await ctx.db.get(userId);
-    if (user) {
-      await ensurePersonalPublisherForUser(ctx, user);
+    const now = Date.now();
+    const displayName = args.displayName.trim();
+    const bio = args.bio?.trim();
+    await ctx.db.patch(userId, {
+      displayName,
+      bio,
+      updatedAt: now,
+    });
+    await ctx.db.insert("auditLogs", {
+      actorUserId: userId,
+      action: "user.profile.update",
+      targetType: "user",
+      targetId: userId,
+      metadata: {
+        previous: {
+          displayName: user?.displayName ?? null,
+          bio: user?.bio ?? null,
+        },
+        next: {
+          displayName,
+          bio: bio ?? null,
+        },
+      },
+      createdAt: now,
+    });
+    const nextUser = await ctx.db.get(userId);
+    if (nextUser) {
+      await ensurePersonalPublisherForUser(
+        ctx,
+        nextUser,
+        {
+          actorUserId: userId,
+          source: "user.profile.update",
+        },
+        { handleConflict: "skip" },
+      );
     }
   },
 });
@@ -343,6 +482,7 @@ export const deleteAccount = mutation({
       }
     }
 
+    const user = await ctx.db.get(userId);
     await ctx.db.patch(userId, {
       deactivatedAt: now,
       purgedAt: now,
@@ -363,6 +503,23 @@ export const deleteAccount = mutation({
       updatedAt: now,
     });
     await ctx.runMutation(internal.telemetry.clearUserTelemetryInternal, { userId });
+    await ctx.db.insert("auditLogs", {
+      actorUserId: userId,
+      action: "user.delete",
+      targetType: "user",
+      targetId: userId,
+      metadata: {
+        previous: {
+          handle: user?.handle ?? null,
+          displayName: user?.displayName ?? null,
+          name: user?.name ?? null,
+          image: user?.image ?? null,
+          emailPresent: Boolean(user?.email),
+          personalPublisherId: user?.personalPublisherId ?? null,
+        },
+      },
+      createdAt: now,
+    });
   },
 });
 
@@ -799,6 +956,115 @@ async function unbanUserWithActor(
   };
 }
 
+// ---------------------------------------------------------------------------
+// Moderation hold management
+// ---------------------------------------------------------------------------
+
+/**
+ * Admin-only: lift the moderation hold placed on a user after a false-positive
+ * malicious upload detection.
+ *
+ * When the static scanner flags a skill as malicious, the publisher is placed
+ * under a moderation hold (`requiresModerationAt` set). This hides all their
+ * skills and causes all future publishes to start hidden. The hold has no
+ * self-service release path -- only an admin can lift it.
+ *
+ * This mutation:
+ * 1. Clears `requiresModerationAt` and `requiresModerationReason` on the user
+ * 2. Restores skills that were hidden due to the moderation hold
+ * 3. Creates an audit log entry
+ */
+export const liftModerationHold = mutation({
+  args: {
+    userId: v.id("users"),
+    reason: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const { user } = await requireUser(ctx);
+    return liftModerationHoldWithActor(ctx, user, args.userId, args.reason);
+  },
+});
+
+export const liftModerationHoldInternal = internalMutation({
+  args: {
+    actorUserId: v.id("users"),
+    targetUserId: v.id("users"),
+    reason: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const actor = await ctx.db.get(args.actorUserId);
+    if (!actor || actor.deletedAt || actor.deactivatedAt) throw new Error("User not found");
+    return liftModerationHoldWithActor(ctx, actor, args.targetUserId, args.reason);
+  },
+});
+
+async function liftModerationHoldWithActor(
+  ctx: MutationCtx,
+  actor: Doc<"users">,
+  targetUserId: Id<"users">,
+  reasonRaw?: string,
+) {
+  assertAdmin(actor);
+
+  const target = await ctx.db.get(targetUserId);
+  if (!target) throw new Error("User not found");
+  if (target.deletedAt || target.deactivatedAt) {
+    throw new Error("Cannot lift hold on a deleted or deactivated account");
+  }
+  if (!target.requiresModerationAt) {
+    return { ok: true as const, alreadyCleared: true, restoredSkills: 0, scheduledSkills: false };
+  }
+
+  const reason = reasonRaw?.trim();
+  if (reason && reason.length > 500) {
+    throw new Error("Reason too long (max 500 chars)");
+  }
+
+  const holdPlacedAt = target.requiresModerationAt;
+  const now = Date.now();
+
+  // Clear the moderation hold on the user
+  await ctx.db.patch(targetUserId, {
+    requiresModerationAt: undefined,
+    requiresModerationReason: undefined,
+    updatedAt: now,
+  });
+
+  // Restore skills that were hidden due to the moderation hold.
+  // The batch handler checks if the user has been re-held between pages
+  // and aborts if so (race condition safety).
+  const restoreResult = (await ctx.runMutation(
+    internal.skills.restoreOwnedSkillsForModerationLiftBatchInternal,
+    {
+      ownerUserId: targetUserId,
+      holdPlacedAt,
+      cursor: undefined,
+    },
+  )) as { restoredCount?: number; scheduled?: boolean };
+  const restoredCount = restoreResult.restoredCount ?? 0;
+  const scheduledSkills = restoreResult.scheduled ?? false;
+
+  await ctx.db.insert("auditLogs", {
+    actorUserId: actor._id,
+    action: "user.moderation.lift",
+    targetType: "user",
+    targetId: targetUserId,
+    metadata: {
+      reason: reason || undefined,
+      holdPlacedAt,
+      restoredSkills: restoredCount,
+    },
+    createdAt: now,
+  });
+
+  return {
+    ok: true as const,
+    alreadyCleared: false,
+    restoredSkills: restoredCount,
+    scheduledSkills,
+  };
+}
+
 /**
  * Admin-only: set or unset the trustedPublisher flag for a user.
  * Trusted publishers bypass the pending.scan auto-hide for new skill publishes.
@@ -974,14 +1240,15 @@ export const ensurePublisherHandleInternal = internalMutation({
 });
 
 /**
- * Auto-ban a user whose skill was flagged malicious by VT.
+ * Auto-ban a user whose skill was flagged malicious by a scanner.
  * Skips moderators/admins. No actor required — this is a system-level action.
  */
 export const autobanMalwareAuthorInternal = internalMutation({
   args: {
     ownerUserId: v.id("users"),
-    sha256hash: v.string(),
+    sha256hash: v.optional(v.string()),
     slug: v.string(),
+    trigger: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const target = await ctx.db.get(args.ownerUserId);
@@ -1036,20 +1303,24 @@ export const autobanMalwareAuthorInternal = internalMutation({
       userId: args.ownerUserId,
     });
 
+    const metadata: Record<string, unknown> = {
+      trigger: args.trigger?.trim() || "scanner.malicious",
+      slug: args.slug,
+      hiddenSkills: hiddenCount,
+      deletedSkillComments: deletedComments.skillComments,
+      deletedSoulComments: deletedComments.soulComments,
+    };
+    if (args.sha256hash?.trim()) {
+      metadata.sha256hash = args.sha256hash.trim();
+    }
+
     // Audit log -- use the target as actor since there's no human actor
     await ctx.db.insert("auditLogs", {
       actorUserId: args.ownerUserId,
       action: "user.autoban.malware",
       targetType: "user",
       targetId: args.ownerUserId,
-      metadata: {
-        trigger: "vt.malicious",
-        sha256hash: args.sha256hash,
-        slug: args.slug,
-        hiddenSkills: hiddenCount,
-        deletedSkillComments: deletedComments.skillComments,
-        deletedSoulComments: deletedComments.soulComments,
-      },
+      metadata,
       createdAt: now,
     });
 

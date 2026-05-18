@@ -8,7 +8,21 @@ import type { SkillListEntry, SkillSearchEntry } from "./-types";
 
 const pageSize = 25;
 
-type SkillsView = "cards" | "list";
+function isNavigationAbortError(err: unknown) {
+  if (!(err instanceof Error)) return false;
+  return (
+    err.name === "AbortError" || err.message === "Failed to fetch" || err.message === "Load failed"
+  );
+}
+
+export type SkillsView = "grid" | "list";
+type LegacySkillsView = SkillsView | "cards";
+
+export function normalizeSkillsView(value: unknown): SkillsView | undefined {
+  if (value === "list") return "list";
+  if (value === "grid" || value === "cards") return "grid";
+  return undefined;
+}
 
 export type SkillsSearchState = {
   q?: string;
@@ -16,9 +30,8 @@ export type SkillsSearchState = {
   dir?: SortDir;
   highlighted?: boolean;
   featured?: boolean;
-  nonSuspicious?: boolean;
   tag?: string;
-  view?: SkillsView;
+  view?: LegacySkillsView;
   focus?: "search";
 };
 
@@ -57,9 +70,8 @@ export function useSkillsBrowseModel({
   const loadMoreInFlightRef = useRef(false);
   const navigateTimer = useRef<number>(0);
 
-  const view: SkillsView = search.view ?? "list";
+  const view: SkillsView = normalizeSkillsView(search.view) ?? "list";
   const featuredOnly = search.featured ?? search.highlighted ?? false;
-  const nonSuspiciousOnly = search.nonSuspicious ?? false;
   const capabilityTag = search.tag;
   const searchSkills = useAction(api.search.searchSkills);
 
@@ -73,7 +85,7 @@ export function useSkillsBrowseModel({
   const listSort = toListSort(sort);
   const dir = parseDir(search.dir, sort);
   const searchKey = trimmedQuery
-    ? `${trimmedQuery}::${featuredOnly ? "1" : "0"}::${nonSuspiciousOnly ? "1" : "0"}::${capabilityTag ?? ""}`
+    ? `${trimmedQuery}::${featuredOnly ? "1" : "0"}::${capabilityTag ?? ""}`
     : "";
 
   // One-shot paginated fetches (no reactive subscription)
@@ -91,7 +103,6 @@ export function useSkillsBrowseModel({
           sort: listSort,
           dir,
           highlightedOnly: featuredOnly,
-          nonSuspiciousOnly,
           capabilityTag,
         });
         if (generation !== fetchGeneration.current) return;
@@ -101,23 +112,30 @@ export function useSkillsBrowseModel({
         setListStatus(canAdvance ? "idle" : "done");
       } catch (err) {
         if (generation !== fetchGeneration.current) return;
-        console.error("Failed to fetch skills page:", err);
+        if (!isNavigationAbortError(err)) {
+          console.error("Failed to fetch skills page:", err);
+        }
         // Reset to idle so the user can retry via "Load more"
         setListStatus(cursor ? "idle" : "done");
       }
     },
-    [capabilityTag, dir, featuredOnly, listSort, nonSuspiciousOnly],
+    [capabilityTag, dir, featuredOnly, listSort],
   );
 
   // Reset and fetch first page when sort/dir/filters change
   useEffect(() => {
-    if (hasQuery) return;
+    if (hasQuery) {
+      return () => {};
+    }
     fetchGeneration.current += 1;
     const generation = fetchGeneration.current;
     setListResults([]);
     setListCursor(null);
     setListStatus("loading");
     void fetchPage(null, generation);
+    return () => {
+      fetchGeneration.current += 1;
+    };
   }, [hasQuery, fetchPage]);
 
   const isLoadingList = listStatus === "loading";
@@ -157,7 +175,6 @@ export function useSkillsBrowseModel({
           const data = (await searchSkills({
             query: trimmedQuery,
             highlightedOnly: featuredOnly,
-            nonSuspiciousOnly,
             capabilityTag,
             limit: searchLimit,
           })) as Array<SkillSearchEntry>;
@@ -172,15 +189,7 @@ export function useSkillsBrowseModel({
       })();
     }, 220);
     return () => window.clearTimeout(handle);
-  }, [
-    capabilityTag,
-    hasQuery,
-    featuredOnly,
-    nonSuspiciousOnly,
-    searchLimit,
-    searchSkills,
-    trimmedQuery,
-  ]);
+  }, [capabilityTag, hasQuery, featuredOnly, searchLimit, searchSkills, trimmedQuery]);
 
   const baseItems = useMemo(() => {
     if (hasQuery) {
@@ -332,16 +341,6 @@ export function useSkillsBrowseModel({
     });
   }, [navigate]);
 
-  const onToggleNonSuspicious = useCallback(() => {
-    void navigate({
-      search: (prev) => ({
-        ...prev,
-        nonSuspicious: prev.nonSuspicious ? undefined : true,
-      }),
-      replace: true,
-    });
-  }, [navigate]);
-
   const onSortChange = useCallback(
     (value: string) => {
       const nextSort = parseSort(value);
@@ -371,7 +370,7 @@ export function useSkillsBrowseModel({
     void navigate({
       search: (prev) => ({
         ...prev,
-        view: prev.view === "cards" ? undefined : "cards",
+        view: normalizeSkillsView(prev.view) === "grid" ? undefined : "grid",
       }),
       replace: true,
     });
@@ -379,7 +378,6 @@ export function useSkillsBrowseModel({
 
   const activeFilters: string[] = [];
   if (featuredOnly) activeFilters.push("featured");
-  if (nonSuspiciousOnly) activeFilters.push("non-suspicious");
   if (capabilityTag) activeFilters.push(SKILL_CAPABILITY_LABELS[capabilityTag] ?? capabilityTag);
 
   const onCapabilityTagChange = useCallback(
@@ -407,13 +405,11 @@ export function useSkillsBrowseModel({
     isLoadingSkills,
     loadMore,
     loadMoreRef,
-    nonSuspiciousOnly,
     onCapabilityTagChange,
     onQueryChange,
     onSortChange,
     onToggleDir,
     onToggleFeatured,
-    onToggleNonSuspicious,
     onToggleView,
     query,
     sort,

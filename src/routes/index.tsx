@@ -76,7 +76,6 @@ function SkillsHome() {
         numItems: 6,
         sort: "downloads",
         dir: "desc",
-        nonSuspiciousOnly: true,
       })
       .then((r) => {
         if (cancelled) return;
@@ -492,7 +491,7 @@ function SkillsHome() {
               value={query}
               onChange={(e) => setQuery(e.target.value)}
             />
-            <button type="submit" className="home-v2-search-go">
+            <button type="submit" className="home-v2-search-go" aria-label="Search">
               <span className="home-v2-search-go-label">Search</span> <ArrowRight size={16} />
             </button>
           </form>
@@ -549,7 +548,6 @@ function SkillsHome() {
                         dir: undefined,
                         featured: true,
                         highlighted: undefined,
-                        nonSuspicious: undefined,
                         view: undefined,
                         focus: undefined,
                       }
@@ -559,7 +557,6 @@ function SkillsHome() {
                         dir: "desc",
                         featured: undefined,
                         highlighted: undefined,
-                        nonSuspicious: true,
                         view: undefined,
                         focus: undefined,
                       }
@@ -679,7 +676,6 @@ function SkillsHome() {
               sort: undefined,
               dir: undefined,
               highlighted: undefined,
-              nonSuspicious: true,
               view: undefined,
               focus: undefined,
             }}
@@ -708,13 +704,13 @@ function SkillsHome() {
               <ChevronRight size={16} />
             </span>
           </Link>
-          <Link to="/users" className="home-v2-cat-item">
+          <Link to="/publishers" className="home-v2-cat-item">
             <div className="home-v2-cat-icon">
               <Users size={20} />
             </div>
             <div className="home-v2-cat-text">
-              <div className="home-v2-cat-name">Builders</div>
-              <div className="home-v2-cat-desc">Community creators</div>
+              <div className="home-v2-cat-name">Publishers</div>
+              <div className="home-v2-cat-desc">Builders and orgs</div>
             </div>
             <span className="home-v2-cat-arrow">
               <ChevronRight size={16} />
@@ -783,7 +779,6 @@ function SkillsHome() {
                 dir: "desc",
                 featured: undefined,
                 highlighted: undefined,
-                nonSuspicious: true,
                 view: undefined,
                 focus: undefined,
               }}
@@ -906,7 +901,11 @@ function OnlyCrabsHome() {
               public place.
             </p>
             <div style={{ display: "flex", gap: 12, marginTop: 20 }}>
-              <Link to="/upload" search={{ updateSlug: undefined }} className="btn btn-primary">
+              <Link
+                to="/upload"
+                search={{ updateSlug: undefined, ownerHandle: undefined }}
+                className="btn btn-primary"
+              >
                 Publish a soul
               </Link>
               <Link

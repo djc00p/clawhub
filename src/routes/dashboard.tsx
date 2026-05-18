@@ -1,22 +1,23 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
-import { useMutation, useQuery } from "convex/react";
-import { Clock, Info, MoreVertical, Plus, RotateCw, Settings } from "lucide-react";
+import { usePaginatedQuery, useQuery } from "convex/react";
+import { Box, Loader2, Package, Plus, Settings } from "lucide-react";
 import { useEffect, useState } from "react";
-import { toast } from "sonner";
 import { api } from "../../convex/_generated/api";
 import type { Doc } from "../../convex/_generated/dataModel";
+import { ArtifactCard } from "../components/artifacts/ArtifactCard";
+import { packageArtifactStatus, skillArtifactStatus } from "../components/artifacts/artifactStatus";
 import { DashboardSkeleton } from "../components/skeletons/DashboardSkeleton";
-import { Badge } from "../components/ui/badge";
+import { buildSkillHref } from "../components/skillDetailUtils";
 import { Button } from "../components/ui/button";
 import { Card } from "../components/ui/card";
 import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "../components/ui/dropdown-menu";
-import { Tooltip, TooltipContent, TooltipTrigger } from "../components/ui/tooltip";
-import { getUserFacingConvexError } from "../lib/convexError";
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "../components/ui/select";
+import { buildPluginDetailHref } from "../lib/pluginRoutes";
 
 const emptyPluginPublishSearch = {
   ownerHandle: undefined,
@@ -51,6 +52,9 @@ type DashboardSkill = Pick<
   | "createdAt"
   | "updatedAt"
 > & {
+  ownerPath: string;
+  detailHref?: string;
+  settingsHref?: string;
   pendingReview?: boolean;
   qualityDecision?: "pass" | "quarantine" | "reject";
   latestVersion: {
@@ -60,7 +64,6 @@ type DashboardSkill = Pick<
     llmStatus: string | null;
     staticScanStatus: "clean" | "suspicious" | "malicious" | null;
   } | null;
-  rescanState?: DashboardRescanState | null;
 };
 
 type DashboardPackage = {
@@ -74,6 +77,7 @@ type DashboardPackage = {
   sourceRepo?: string | null;
   summary?: string | null;
   latestVersion?: string | null;
+  updatedAt: number;
   stats: {
     downloads: number;
     installs: number;
@@ -92,28 +96,6 @@ type DashboardPackage = {
     llmStatus: string | null;
     staticScanStatus: "clean" | "suspicious" | "malicious" | null;
   } | null;
-  rescanState?: DashboardRescanState | null;
-};
-
-type DashboardRescanState = {
-  maxRequests: number;
-  requestCount: number;
-  remainingRequests: number;
-  canRequest: boolean;
-  inProgressRequest: DashboardRescanRequest | null;
-  latestRequest: DashboardRescanRequest | null;
-};
-
-type DashboardRescanRequest = {
-  _id: string;
-  targetKind: "skill" | "plugin";
-  targetVersion: string;
-  requestedByUserId: string;
-  status: "in_progress" | "completed" | "failed";
-  error?: string;
-  createdAt: number;
-  updatedAt: number;
-  completedAt?: number;
 };
 
 export const Route = createFileRoute("/dashboard")({
@@ -137,16 +119,22 @@ export function Dashboard() {
   const selectedPublisher =
     publishers?.find((entry) => entry.publisher._id === selectedPublisherId) ?? null;
 
-  const mySkills = useQuery(
-    api.skills.list,
+  const skillsQueryArgs =
     selectedPublisher?.publisher.kind === "user" && me?._id
-      ? { ownerUserId: me._id, limit: 100 }
+      ? { ownerUserId: me._id }
       : selectedPublisherId
-        ? { ownerPublisherId: selectedPublisherId as Doc<"publishers">["_id"], limit: 100 }
+        ? { ownerPublisherId: selectedPublisherId as Doc<"publishers">["_id"] }
         : me?._id
-          ? { ownerUserId: me._id, limit: 100 }
-          : "skip",
-  ) as DashboardSkill[] | undefined;
+          ? { ownerUserId: me._id }
+          : "skip";
+  const {
+    results: paginatedSkills,
+    status: skillsStatus,
+    loadMore,
+  } = usePaginatedQuery(api.skills.listDashboardPaginated, skillsQueryArgs, {
+    initialNumItems: 50,
+  });
+  const mySkills = paginatedSkills as DashboardSkill[] | undefined;
   const myPackages = useQuery(
     api.packages.list,
     selectedPublisherId
@@ -179,12 +167,35 @@ export function Dashboard() {
 
   const skills = mySkills ?? [];
   const packages = myPackages ?? [];
-  const isLoading = mySkills === undefined;
+  const isLoading = skillsStatus === "LoadingFirstPage";
   const ownerHandle =
     selectedPublisher?.publisher.handle ?? me.handle ?? me.name ?? me.displayName ?? me._id;
+  const isDashboardEmpty = !isLoading && skills.length === 0 && packages.length === 0;
+
+  const publisherSelector =
+    publishers && publishers.length > 1 ? (
+      <div className="dashboard-publisher-select">
+        <span className="text-sm font-medium text-muted-foreground">Viewing as</span>
+        <Select value={selectedPublisherId} onValueChange={setSelectedPublisherId}>
+          <SelectTrigger
+            aria-label="Dashboard publisher"
+            className="min-w-[220px] rounded-[var(--radius-sm)]"
+          >
+            <SelectValue placeholder="Select publisher" />
+          </SelectTrigger>
+          <SelectContent>
+            {publishers.map((entry) => (
+              <SelectItem key={entry.publisher._id} value={entry.publisher._id}>
+                @{entry.publisher.handle} · {entry.publisher.kind === "org" ? "Org" : "Personal"}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      </div>
+    ) : null;
 
   // Welcome state for new users with no content
-  if (!isLoading && skills.length === 0 && packages.length === 0) {
+  if (isDashboardEmpty) {
     return (
       <main className="section">
         <div className="empty-state">
@@ -195,9 +206,10 @@ export function Dashboard() {
             You're signed in as @{ownerHandle}. Get started by publishing your first skill or
             plugin.
           </p>
+          {publisherSelector}
           <div className="flex gap-3 justify-center">
             <Button asChild variant="primary">
-              <Link to="/publish-skill" search={{ updateSlug: undefined }}>
+              <Link to="/skills/publish" search={{ updateSlug: undefined, ownerHandle }}>
                 Publish a Skill
               </Link>
             </Button>
@@ -209,7 +221,6 @@ export function Dashboard() {
                   sort: undefined,
                   dir: undefined,
                   highlighted: undefined,
-                  nonSuspicious: true,
                   view: undefined,
                   focus: undefined,
                 }}
@@ -228,390 +239,156 @@ export function Dashboard() {
       <div className="dashboard-header">
         <div>
           <h1 className="section-title m-0">Dashboard</h1>
-          <p className="section-subtitle m-0">
-            View your published skills and plugins.
-          </p>
+          <p className="section-subtitle m-0">View your published skills and plugins.</p>
         </div>
+        {publisherSelector}
       </div>
 
       <div className="dashboard-owner-grid">
-        <Card className="dashboard-owner-panel">
-          <section className="dashboard-collection-block">
-            <div className="dashboard-section-header">
-              <h2 className="dashboard-collection-title">Skills</h2>
-              <Button asChild size="sm" className="dashboard-section-action">
-                <Link to="/publish-skill" search={{ updateSlug: undefined }}>
-                  <Plus className="h-4 w-4" aria-hidden="true" />
-                  New Skill
-                </Link>
-              </Button>
+        <section className="dashboard-collection-block">
+          <div className="dashboard-section-header">
+            <h2 className="dashboard-collection-title">Skills</h2>
+            <Button asChild size="sm" className="dashboard-section-action">
+              <Link to="/skills/publish" search={{ updateSlug: undefined, ownerHandle }}>
+                <Plus className="h-4 w-4" aria-hidden="true" />
+                New Skill
+              </Link>
+            </Button>
+          </div>
+          {skills.length === 0 ? (
+            <div className="dashboard-inline-empty">
+              <div className="dashboard-inline-empty-copy">
+                <strong>No skills yet.</strong> Publish your first skill to share it with the
+                community.
+              </div>
             </div>
-            {skills.length === 0 ? (
-              <div className="dashboard-inline-empty">
-                <div className="dashboard-inline-empty-copy">
-                  <strong>No skills yet.</strong> Publish your first skill to share it with the
-                  community.
-                </div>
-              </div>
-            ) : (
-              <div className="dashboard-list">
-                {skills.map((skill) => (
-                  <SkillRow key={skill._id} skill={skill} ownerHandle={ownerHandle} />
-                ))}
-              </div>
-            )}
-          </section>
-        </Card>
+          ) : (
+            <div className="dashboard-list">
+              {skills.map((skill) => (
+                <SkillRow key={skill._id} skill={skill} ownerHandle={ownerHandle} />
+              ))}
+            </div>
+          )}
+          {skills.length > 0 && skillsStatus === "CanLoadMore" && (
+            <div className="mt-4 flex justify-center">
+              <Button onClick={() => loadMore(50)}>Load More</Button>
+            </div>
+          )}
+          {skillsStatus === "LoadingMore" && (
+            <div className="mt-4 flex items-center justify-center gap-2 text-sm text-muted-foreground">
+              <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+              <span>Loading more skills...</span>
+            </div>
+          )}
+        </section>
 
-        <Card className="dashboard-owner-panel">
-          <section className="dashboard-collection-block">
-            <div className="dashboard-section-header">
-              <h2 className="dashboard-collection-title">Plugins</h2>
-              <Button asChild size="sm" className="dashboard-section-action">
-                <Link to="/publish-plugin" search={{ ...emptyPluginPublishSearch, ownerHandle }}>
-                  <Plus className="h-4 w-4" aria-hidden="true" />
-                  New Plugin
-                </Link>
-              </Button>
+        <section className="dashboard-collection-block">
+          <div className="dashboard-section-header">
+            <h2 className="dashboard-collection-title">Plugins</h2>
+            <Button asChild size="sm" className="dashboard-section-action">
+              <Link to="/plugins/publish" search={{ ...emptyPluginPublishSearch, ownerHandle }}>
+                <Plus className="h-4 w-4" aria-hidden="true" />
+                New Plugin
+              </Link>
+            </Button>
+          </div>
+          {packages.length === 0 ? (
+            <div className="dashboard-inline-empty">
+              <div className="dashboard-inline-empty-copy">
+                <strong>No plugins yet.</strong> Publish your first plugin release to validate and
+                distribute it.
+              </div>
             </div>
-            {packages.length === 0 ? (
-              <div className="dashboard-inline-empty">
-                <div className="dashboard-inline-empty-copy">
-                  <strong>No plugins yet.</strong> Publish your first plugin release to validate and
-                  distribute it.
-                </div>
-              </div>
-            ) : (
-              <div className="dashboard-list">
-                {packages.map((pkg) => (
-                  <PackageRow key={pkg._id} pkg={pkg} ownerHandle={ownerHandle} />
-                ))}
-              </div>
-            )}
-          </section>
-        </Card>
+          ) : (
+            <div className="dashboard-list">
+              {packages.map((pkg) => (
+                <PackageRow key={pkg._id} pkg={pkg} />
+              ))}
+            </div>
+          )}
+        </section>
       </div>
     </main>
   );
 }
 
-function SkillRow({ skill, ownerHandle }: { skill: DashboardSkill; ownerHandle: string | null }) {
-  const status = skillDashboardStatus(skill);
-  const detailParams = { owner: ownerHandle ?? "unknown", slug: skill.slug };
-  const settingsHref = `/${encodeURIComponent(detailParams.owner)}/${encodeURIComponent(
-    skill.slug,
-  )}/settings`;
+function SkillRow({ skill, ownerHandle }: { skill: DashboardSkill; ownerHandle: string }) {
+  const status = skillArtifactStatus(skill);
+  const titleId = `dashboard-skill-title-${skill._id}`;
+  const detailHref =
+    skill.detailHref ??
+    buildSkillHref(ownerHandle, skill.ownerPublisherId ?? skill.ownerUserId ?? null, skill.slug);
+  const settingsHref = skill.settingsHref ?? `${detailHref}/settings`;
+  const stats = [
+    { label: "Downloads", value: formatCompactNumber(skill.stats?.downloads ?? 0) },
+    { label: "Current version", value: formatVersion(skill.latestVersion?.version) },
+    { label: "Last updated", value: formatShortDate(skill.updatedAt) },
+  ];
 
   return (
-    <div className="dashboard-list-row">
-      <div className="dashboard-list-primary">
-        <div className="dashboard-list-title">
-          <Link
-            to="/$owner/$slug"
-            params={detailParams}
-            className="dashboard-skill-name"
-          >
-            {skill.displayName}
-          </Link>
-        </div>
-      </div>
-      <div className="dashboard-list-summary">{skill.summary ?? "No summary provided."}</div>
-      <div className="dashboard-list-status">
-        <StatusChipWithTooltip status={status} />
-      </div>
-      <RowMenu
-        kind="skill"
-        targetId={skill._id}
-        targetLabel={skill.displayName}
-        settingsHref={settingsHref}
-        statusLabel={status.label}
-        rescanState={skill.rescanState ?? null}
-      />
-    </div>
-  );
-}
-
-function StatusChipWithTooltip({
-  status,
-}: {
-  status: {
-    key?: string;
-    label: string;
-    description: string;
-    variant: "default" | "pending" | "warning" | "destructive" | "success";
-  };
-}) {
-  const showInfo = status.label !== "Visible";
-
-  return (
-    <Badge variant={status.variant} className="dashboard-status-chip">
-      {status.key === "pending" ? <Clock className="h-3 w-3" aria-hidden="true" /> : null}
-      {status.label}
-      {showInfo ? (
-        <Tooltip>
-          <TooltipTrigger asChild>
-            <button
-              type="button"
-              className="dashboard-status-info"
-              aria-label={`${status.label} status reason`}
-            >
-              <Info className="h-3.5 w-3.5" aria-hidden="true" />
-            </button>
-          </TooltipTrigger>
-          <TooltipContent side="top" align="end">
-            {status.description}
-          </TooltipContent>
-        </Tooltip>
-      ) : null}
-    </Badge>
-  );
-}
-
-function packageDashboardStatus(pkg: DashboardPackage): {
-  label: string;
-  description: string;
-  variant: "default" | "pending" | "warning" | "destructive" | "success";
-} {
-  const releaseStatuses = new Set([
-    pkg.latestRelease?.vtStatus,
-    pkg.latestRelease?.llmStatus,
-    pkg.latestRelease?.staticScanStatus,
-  ]);
-  if (pkg.scanStatus === "malicious" || releaseStatuses.has("malicious")) {
-    return {
-      label: "Blocked",
-      description: "Security checks found malicious content.",
-      variant: "destructive",
-    };
-  }
-  if (pkg.scanStatus === "suspicious" || releaseStatuses.has("suspicious")) {
-    return {
-      label: "Suspicious",
-      description: "Security checks flagged this plugin for review.",
-      variant: "warning",
-    };
-  }
-  if (pkg.scanStatus === "pending" || pkg.pendingReview) {
-    return {
-      label: "Pending checks",
-      description: "Security verification is still running.",
-      variant: "pending",
-    };
-  }
-  if (pkg.scanStatus === "clean") {
-    return {
-      label: "Visible",
-      description: "Available on public catalog surfaces.",
-      variant: "success",
-    };
-  }
-  return {
-    label: "Unknown",
-    description: "Open the plugin for the latest release and security details.",
-    variant: "default",
-  };
-}
-
-function PackageRow({ pkg }: { pkg: DashboardPackage; ownerHandle: string }) {
-  const status = packageDashboardStatus(pkg);
-
-  return (
-    <div className="dashboard-list-row">
-      <div className="dashboard-list-primary">
-        <div className="dashboard-list-title">
-          <Link to="/plugins/$name" params={{ name: pkg.name }} className="dashboard-skill-name">
-            {pkg.displayName}
-          </Link>
-        </div>
-      </div>
-      <div className="dashboard-list-summary">{pkg.summary ?? "No summary provided."}</div>
-      <div className="dashboard-list-status">
-        <StatusChipWithTooltip status={status} />
-      </div>
-      <RowMenu
-        kind="plugin"
-        targetId={pkg._id}
-        targetLabel={pkg.displayName}
-        settingsHref={`/plugins/${encodeURIComponent(pkg.name)}`}
-        statusLabel={status.label}
-        rescanState={pkg.rescanState ?? null}
-      />
-    </div>
-  );
-}
-
-function canShowDashboardRescan(statusLabel: string, state: DashboardRescanState | null) {
-  if (statusLabel === "Visible") return false;
-  if (!state) return true;
-  return state.canRequest && !state.inProgressRequest && state.remainingRequests > 0;
-}
-
-function RowMenu({
-  kind,
-  targetId,
-  targetLabel,
-  settingsHref,
-  statusLabel,
-  rescanState,
-}: {
-  kind: "skill" | "plugin";
-  targetId: string;
-  targetLabel: string;
-  settingsHref: string;
-  statusLabel: string;
-  rescanState: DashboardRescanState | null;
-}) {
-  const requestSkillRescan = useMutation(api.skills.requestRescan);
-  const requestPluginRescan = useMutation(api.packages.requestRescan);
-  const [isRequesting, setIsRequesting] = useState(false);
-  const isScanInProgress = Boolean(rescanState?.inProgressRequest);
-  const showRescan = canShowDashboardRescan(statusLabel, rescanState);
-  const showRescanItem = showRescan || isScanInProgress;
-  const rescanLabel = isScanInProgress
-    ? "Scan in progress"
-    : isRequesting
-      ? "Requesting..."
-      : "Request rescan";
-
-  async function requestRescan() {
-    if (!showRescan || isRequesting) return;
-    setIsRequesting(true);
-    try {
-      if (kind === "skill") {
-        await requestSkillRescan({ skillId: targetId as Doc<"skills">["_id"] });
-      } else {
-        await requestPluginRescan({ packageId: targetId as Doc<"packages">["_id"] });
+    <ArtifactCard
+      href={detailHref}
+      title={skill.displayName}
+      titleId={titleId}
+      icon={<Box className="h-5 w-5" />}
+      status={status}
+      stats={stats}
+      actions={
+        <SettingsLink href={settingsHref} label={`Open settings for ${skill.displayName}`} />
       }
-      toast.success(`Rescan requested for ${targetLabel}.`);
-    } catch (error) {
-      toast.error(getUserFacingConvexError(error, "Could not request a rescan."));
-    } finally {
-      setIsRequesting(false);
-    }
-  }
-
-  return (
-    <div className="dashboard-row-menu">
-      <DropdownMenu>
-        <DropdownMenuTrigger asChild>
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon-sm"
-            aria-label={`Open actions for ${targetLabel}`}
-          >
-            <MoreVertical className="h-4 w-4" aria-hidden="true" />
-          </Button>
-        </DropdownMenuTrigger>
-        <DropdownMenuContent align="end" className="dashboard-row-menu-content">
-          <DropdownMenuItem asChild>
-            <a href={settingsHref}>
-              <Settings className="h-4 w-4" aria-hidden="true" />
-              Settings
-            </a>
-          </DropdownMenuItem>
-          {showRescanItem ? (
-            <DropdownMenuItem
-              disabled={isRequesting || isScanInProgress}
-              onSelect={() => void requestRescan()}
-            >
-              <RotateCw
-                className={
-                  isRequesting || isScanInProgress
-                    ? "h-4 w-4 animate-spin [animation-duration:2.4s]"
-                    : "h-4 w-4"
-                }
-                aria-hidden="true"
-              />
-              {rescanLabel}
-            </DropdownMenuItem>
-          ) : null}
-        </DropdownMenuContent>
-      </DropdownMenu>
-    </div>
+    />
   );
 }
 
-function skillDashboardStatus(skill: DashboardSkill): {
-  key: "visible" | "pending" | "suspicious" | "blocked" | "hidden" | "removed" | "quality";
-  label: string;
-  description: string;
-  variant: "default" | "pending" | "warning" | "destructive" | "success";
-} {
-  const flags = skill.moderationFlags ?? [];
-  const reason = skill.moderationReason ?? "";
-  const versionStatuses = new Set([
-    skill.latestVersion?.vtStatus,
-    skill.latestVersion?.llmStatus,
-    skill.latestVersion?.staticScanStatus,
-  ]);
-  if (skill.moderationStatus === "removed") {
-    return {
-      key: "removed",
-      label: "Removed",
-      description: "Removed from public inventory by moderation.",
-      variant: "destructive",
-    };
-  }
-  if (
-    flags.includes("blocked.malware") ||
-    skill.moderationVerdict === "malicious" ||
-    versionStatuses.has("malicious")
-  ) {
-    return {
-      key: "blocked",
-      label: "Blocked",
-      description:
-        "Unavailable publicly because automated security checks found malicious content.",
-      variant: "destructive",
-    };
-  }
-  if (skill.pendingReview || reason === "pending.scan" || reason === "pending.scan.stale") {
-    return {
-      key: "pending",
-      label: "Pending checks",
-      description: "Hidden until security verification checks finish.",
-      variant: "pending",
-    };
-  }
-  if (
-    skill.qualityDecision === "quarantine" ||
-    skill.qualityDecision === "reject" ||
-    reason === "quality.low"
-  ) {
-    return {
-      key: "quality",
-      label: "Quality held",
-      description: "Unavailable while quality review is holding this release.",
-      variant: "warning",
-    };
-  }
-  if (
-    skill.isSuspicious ||
-    flags.includes("flagged.suspicious") ||
-    skill.moderationVerdict === "suspicious" ||
-    versionStatuses.has("suspicious")
-  ) {
-    return {
-      key: "suspicious",
-      label: "Suspicious",
-      description:
-        "Visible to you, but public surfaces warn or suppress it because it was flagged.",
-      variant: "warning",
-    };
-  }
-  if (skill.moderationStatus === "hidden") {
-    return {
-      key: "hidden",
-      label: "Hidden",
-      description: "Hidden from public catalog surfaces.",
-      variant: "warning",
-    };
-  }
-  return {
-    key: "visible",
-    label: "Visible",
-    description: "Available on public catalog surfaces.",
-    variant: "success",
-  };
+function PackageRow({ pkg }: { pkg: DashboardPackage }) {
+  const status = packageArtifactStatus(pkg);
+  const detailHref = buildPluginDetailHref(pkg.name);
+  const settingsHref = `${detailHref}/settings`;
+  const titleId = `dashboard-package-title-${pkg._id}`;
+  const stats = [
+    { label: "Downloads", value: formatCompactNumber(pkg.stats.downloads ?? 0) },
+    { label: "Current version", value: formatVersion(pkg.latestVersion) },
+    { label: "Last updated", value: formatShortDate(pkg.updatedAt) },
+  ];
+
+  return (
+    <ArtifactCard
+      href={detailHref}
+      title={pkg.displayName}
+      titleId={titleId}
+      icon={<Package className="h-5 w-5" />}
+      status={status}
+      stats={stats}
+      actions={<SettingsLink href={settingsHref} label={`Open settings for ${pkg.displayName}`} />}
+    />
+  );
+}
+
+function formatCompactNumber(value: number) {
+  return new Intl.NumberFormat("en", { notation: "compact", maximumFractionDigits: 1 }).format(
+    value,
+  );
+}
+
+function formatShortDate(timestamp: number | undefined) {
+  if (!timestamp) return "Unknown";
+  return new Intl.DateTimeFormat("en", { month: "short", day: "numeric" }).format(
+    new Date(timestamp),
+  );
+}
+
+function formatVersion(version: string | null | undefined) {
+  return version ? `v${version}` : "Unknown";
+}
+
+function SettingsLink({ href, label }: { href: string; label: string }) {
+  return (
+    <div className="dashboard-row-action">
+      <Button asChild variant="ghost" size="icon-sm">
+        <a href={href} aria-label={label} title="Settings">
+          <Settings className="h-4 w-4" aria-hidden="true" />
+        </a>
+      </Button>
+    </div>
+  );
 }

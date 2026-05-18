@@ -58,16 +58,6 @@ function makeCtx(params: { skill: Record<string, unknown>; version?: Record<stri
       };
     }
 
-    if (table === "rescanRequests") {
-      return {
-        withIndex: vi.fn(() => ({
-          order: vi.fn(() => ({
-            take: vi.fn(async () => []),
-          })),
-        })),
-      };
-    }
-
     throw new Error(`Unexpected query table: ${table}`);
   });
   const get = vi.fn(async (id: string) => {
@@ -213,7 +203,12 @@ describe("skills manual overrides", () => {
       _id: "skillVersions:3",
       skillId: "skills:1",
       staticScan: undefined,
-      vtAnalysis: { status: "suspicious", checkedAt: now - 1000 },
+      vtAnalysis: {
+        status: "suspicious",
+        source: "engines",
+        engineStats: { malicious: 0, suspicious: 1, undetected: 64 },
+        checkedAt: now - 1000,
+      },
       llmAnalysis: undefined,
     };
 
@@ -234,10 +229,10 @@ describe("skills manual overrides", () => {
     expect(patch).toHaveBeenCalledWith(
       "skills:1",
       expect.objectContaining({
-        moderationReason: "scanner.vt.suspicious",
-        moderationVerdict: "suspicious",
-        moderationFlags: ["flagged.suspicious"],
-        isSuspicious: true,
+        moderationReason: "scanner.aggregate.clean",
+        moderationVerdict: "clean",
+        moderationFlags: undefined,
+        isSuspicious: false,
       }),
     );
     expect(insert).toHaveBeenCalledWith(
@@ -277,7 +272,12 @@ describe("skills manual overrides", () => {
       _id: "skillVersions:4",
       skillId: "skills:1",
       staticScan: undefined,
-      vtAnalysis: { status: "malicious", checkedAt: now - 1000 },
+      vtAnalysis: {
+        status: "malicious",
+        source: "engines",
+        engineStats: { malicious: 1, suspicious: 0, undetected: 64 },
+        checkedAt: now - 1000,
+      },
       llmAnalysis: undefined,
     };
 
@@ -291,12 +291,12 @@ describe("skills manual overrides", () => {
     expect(patch).toHaveBeenCalledWith(
       "skills:1",
       expect.objectContaining({
-        moderationStatus: "hidden",
-        moderationReason: "scanner.vt.malicious",
-        moderationVerdict: "malicious",
-        moderationFlags: ["blocked.malware"],
-        hiddenAt: now,
-        lastReviewedAt: now,
+        moderationStatus: "active",
+        moderationReason: "scanner.aggregate.clean",
+        moderationVerdict: "clean",
+        moderationFlags: undefined,
+        hiddenAt: undefined,
+        lastReviewedAt: undefined,
         isSuspicious: false,
       }),
     );

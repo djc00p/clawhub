@@ -3,12 +3,16 @@ import { useQuery } from "convex/react";
 import { api } from "../../../../../convex/_generated/api";
 import {
   SecurityScannerPage,
+  SecurityScannerPageSkeleton,
   type ScannerSlug,
 } from "../../../../components/SecurityScannerPage";
+import { getClawScanHashScrollScripts } from "../../../../lib/clawScanHashScroll";
 import { buildSkillMeta } from "../../../../lib/og";
+import { isAdmin } from "../../../../lib/roles";
 import { fetchSkillPageData } from "../../../../lib/skillPage";
+import { useAuthStatus } from "../../../../lib/useAuthStatus";
 
-const SCANNERS = new Set<ScannerSlug>(["virustotal", "openclaw", "static-analysis"]);
+const SCANNERS = new Set<ScannerSlug>(["virustotal", "clawscan", "static-analysis"]);
 
 function parseScanner(scanner: string): ScannerSlug {
   if (SCANNERS.has(scanner as ScannerSlug)) return scanner as ScannerSlug;
@@ -22,6 +26,13 @@ export const Route = createFileRoute("/$owner/$slug/security/$scanner")({
     if (!isHandle && !isOwnerId) {
       throw notFound();
     }
+    if (params.scanner === "openclaw") {
+      throw redirect({
+        to: "/$owner/$slug/security/$scanner",
+        params: { owner: params.owner, slug: params.slug, scanner: "clawscan" },
+        replace: true,
+      });
+    }
     parseScanner(params.scanner);
   },
   loader: async ({ params }) => {
@@ -32,7 +43,11 @@ export const Route = createFileRoute("/$owner/$slug/security/$scanner")({
     if (canonicalOwner && (canonicalOwner !== params.owner || canonicalSlug !== params.slug)) {
       throw redirect({
         to: "/$owner/$slug/security/$scanner",
-        params: { owner: canonicalOwner, slug: canonicalSlug, scanner: params.scanner },
+        params: {
+          owner: canonicalOwner,
+          slug: canonicalSlug,
+          scanner: params.scanner === "openclaw" ? "clawscan" : params.scanner,
+        },
         replace: true,
       });
     }
@@ -45,12 +60,13 @@ export const Route = createFileRoute("/$owner/$slug/security/$scanner")({
       initialData: data.initialData,
     };
   },
+  scripts: ({ params }) => getClawScanHashScrollScripts(params.scanner),
   head: ({ params, loaderData }) => {
     const scanner = parseScanner(params.scanner);
     const scannerLabel =
       scanner === "virustotal"
         ? "VirusTotal"
-        : scanner === "openclaw"
+        : scanner === "clawscan"
           ? "ClawScan"
           : "Static analysis";
     const meta = buildSkillMeta({
@@ -77,16 +93,16 @@ function SkillSecurityScannerRoute() {
   const { owner, slug, scanner } = Route.useParams();
   const { initialData } = Route.useLoaderData();
   const liveResult = useQuery(api.skills.getBySlug, { slug });
+  const { me } = useAuthStatus();
+  const myPublishers = useQuery(api.publishers.listMine, me ? {} : "skip") as
+    | Array<{ publisher: { _id: string }; role: string }>
+    | undefined;
   const result = liveResult === undefined ? initialData?.result : liveResult;
   const skill = result?.skill;
   const latestVersion = result?.latestVersion;
 
   if (result === undefined) {
-    return (
-      <main className="section">
-        <div className="card">Loading security details...</div>
-      </main>
-    );
+    return <SecurityScannerPageSkeleton />;
   }
 
   if (!skill || !latestVersion) {
@@ -98,6 +114,16 @@ function SkillSecurityScannerRoute() {
   }
 
   const ownerSegment = result?.owner?.handle ?? result?.owner?._id ?? owner;
+  const myManagePublisherIds = new Set(
+    (Array.isArray(myPublishers) ? myPublishers : [])
+      .filter((entry) => entry.role === "owner" || entry.role === "admin")
+      .map((entry) => entry.publisher._id),
+  );
+  const canManageArtifact =
+    Boolean(me && skill && me._id === skill.ownerUserId) ||
+    Boolean(skill?.ownerPublisherId && myManagePublisherIds.has(skill.ownerPublisherId)) ||
+    isAdmin(me);
+  const settingsHref = `/${encodeURIComponent(ownerSegment)}/${encodeURIComponent(slug)}/settings`;
 
   return (
     <SecurityScannerPage
@@ -116,6 +142,9 @@ function SkillSecurityScannerRoute() {
       vtAnalysis={latestVersion.vtAnalysis ?? null}
       llmAnalysis={latestVersion.llmAnalysis ?? null}
       staticScan={latestVersion.staticScan ?? null}
+      clawScanNote={latestVersion.clawScanNote ?? null}
+      canManageArtifact={canManageArtifact}
+      settingsHref={canManageArtifact ? settingsHref : null}
     />
   );
 }

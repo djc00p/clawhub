@@ -16,7 +16,6 @@ import {
 } from "lucide-react";
 import type { RefObject } from "react";
 import { useMemo } from "react";
-import { SKILL_CATEGORIES, type SkillCategory } from "../../lib/categories";
 import { Button } from "../../components/ui/button";
 import { Input } from "../../components/ui/input";
 import {
@@ -26,7 +25,9 @@ import {
   SelectTrigger,
   SelectValue,
 } from "../../components/ui/select";
+import { SKILL_CATEGORIES, type SkillCategory } from "../../lib/categories";
 import { type SortDir, type SortKey } from "./-params";
+import type { SkillsView } from "./-useSkillsBrowseModel";
 
 type SkillsToolbarProps = {
   searchInputRef: RefObject<HTMLInputElement | null>;
@@ -34,13 +35,11 @@ type SkillsToolbarProps = {
   hasQuery: boolean;
   sort: SortKey;
   dir: SortDir;
-  view: "cards" | "list";
+  view: SkillsView;
   highlightedOnly: boolean;
-  nonSuspiciousOnly: boolean;
   capabilityTag?: string;
   onQueryChange: (next: string) => void;
   onToggleHighlighted: () => void;
-  onToggleNonSuspicious: () => void;
   onCapabilityTagChange: (value: string) => void;
   onSortChange: (value: string) => void;
   onToggleDir: () => void;
@@ -76,11 +75,9 @@ export function SkillsToolbar({
   dir,
   view,
   highlightedOnly,
-  nonSuspiciousOnly,
   capabilityTag,
   onQueryChange,
   onToggleHighlighted,
-  onToggleNonSuspicious,
   onCapabilityTagChange,
   onSortChange,
   onToggleDir,
@@ -89,9 +86,8 @@ export function SkillsToolbar({
   const activeCategory = useMemo(() => {
     if (query === "__other__") return "other";
     if (!query) return undefined;
-    return SKILL_CATEGORIES.find((c) =>
-      c.keywords.some((k) => k === query.trim().toLowerCase()),
-    )?.slug;
+    return SKILL_CATEGORIES.find((c) => c.keywords.some((k) => k === query.trim().toLowerCase()))
+      ?.slug;
   }, [query]);
 
   const handleCategoryChange = (cat: SkillCategory | undefined) => {
@@ -137,9 +133,6 @@ export function SkillsToolbar({
         {/* Filter chips */}
         <FilterChip active={highlightedOnly} onClick={onToggleHighlighted}>
           Staff Picks
-        </FilterChip>
-        <FilterChip active={nonSuspiciousOnly} onClick={onToggleNonSuspicious}>
-          Clean only
         </FilterChip>
         {capabilityTag ? (
           <FilterChip
@@ -219,7 +212,7 @@ export function SkillsToolbar({
             type="button"
             onClick={view === "list" ? onToggleView : undefined}
             className={`inline-flex h-[30px] w-[30px] items-center justify-center rounded-full transition-colors ${
-              view === "cards"
+              view === "grid"
                 ? "bg-accent text-accent-fg"
                 : "text-[color:var(--ink-soft)] hover:text-[color:var(--ink)]"
             }`}
@@ -229,7 +222,7 @@ export function SkillsToolbar({
           </button>
           <button
             type="button"
-            onClick={view === "cards" ? onToggleView : undefined}
+            onClick={view === "grid" ? onToggleView : undefined}
             className={`inline-flex h-[30px] w-[30px] items-center justify-center rounded-full transition-colors ${
               view === "list"
                 ? "bg-accent text-accent-fg"

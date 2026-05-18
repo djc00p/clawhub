@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 import { tokenize } from "./lib/searchText";
 import {
   __test,
+  directPrefixSkillMatches,
   hydrateResults,
   lexicalFallbackSouls,
   lexicalFallbackSkills,
@@ -41,6 +42,8 @@ const searchSoulsHandler = (
   }>
 )._handler;
 const lexicalFallbackSkillsHandler = (lexicalFallbackSkills as unknown as WrappedHandler)._handler;
+const directPrefixSkillMatchesHandler = (directPrefixSkillMatches as unknown as WrappedHandler)
+  ._handler;
 const lexicalFallbackSoulsHandler = (
   lexicalFallbackSouls as unknown as WrappedHandler<{ soul: { slug: string; _id: string } }>
 )._handler;
@@ -65,7 +68,11 @@ describe("search helpers", () => {
       },
     ];
     // Slug-like queries now do an indexed exact-slug lookup before lexical fallback.
-    const runQuery = vi.fn().mockResolvedValueOnce(null).mockResolvedValueOnce(fallback);
+    const runQuery = vi
+      .fn()
+      .mockResolvedValueOnce(null) // getExactSkillSlugMatch
+      .mockResolvedValueOnce([]) // directPrefixSkillMatches
+      .mockResolvedValueOnce(fallback); // lexicalFallbackSkills
 
     const result = await searchSkillsHandler(
       {
@@ -79,7 +86,7 @@ describe("search helpers", () => {
     expect(result[0].skill.slug).toBe("orf");
     expect(runQuery).toHaveBeenCalledWith(
       expect.anything(),
-      expect.objectContaining({ query: "orf", queryTokens: ["orf"] }),
+      expect.objectContaining({ query: "orf", queryTokens: ["orf"], limit: 200 }),
     );
   });
 
@@ -97,6 +104,7 @@ describe("search helpers", () => {
     const runQuery = vi
       .fn()
       .mockResolvedValueOnce(null) // getExactSkillSlugMatch
+      .mockResolvedValueOnce([]) // directPrefixSkillMatches
       .mockResolvedValueOnce(fallback); // lexicalFallbackSkills
 
     const result = await searchSkillsHandler(
@@ -114,6 +122,210 @@ describe("search helpers", () => {
       expect.anything(),
       expect.objectContaining({ query: "orf", queryTokens: ["orf"] }),
     );
+  });
+
+  it("uses normalized prefix matches so lowercase name queries do not depend on vector recall", async () => {
+    const scienceClawSkills = [
+      "ScienceClaw: Query (Dry Run)",
+      "ScienceClaw: Multi-Agent Investigation",
+      "ScienceClaw: Agent Status",
+      "ScienceClaw: Local File Investigation",
+      "ScienceClaw: Post to Infinite",
+      "ScienceClaw: Watch (Live Collaboration)",
+    ].map((displayName, index) =>
+      makeSkillDoc({
+        id: `skills:scienceclaw-${index}`,
+        slug: displayName
+          .toLowerCase()
+          .replace(/[^a-z0-9]+/g, "-")
+          .replace(/^-|-$/g, ""),
+        displayName,
+      }),
+    );
+    const ctx = makeDirectPrefixCtx(scienceClawSkills);
+
+    const result = await directPrefixSkillMatchesHandler(ctx, {
+      query: "scienceclaw",
+      limit: 10,
+    });
+
+    expect(result.map((entry) => entry.skill.slug)).toEqual(
+      scienceClawSkills.map((skill) => skill.slug),
+    );
+    expect(ctx.usedIndexes).toEqual(
+      expect.arrayContaining([
+        "by_active_normalized_slug",
+        "by_active_normalized_display_name",
+        "by_active_normalized_slug_first_token",
+        "by_active_normalized_display_name_first_token",
+      ]),
+    );
+  });
+
+  it("recalls non-first-token slug matches via the full-text search index (Bug 1)", async () => {
+    // Repro of the original bug: searching "yijian" against a skill whose
+    // slug is "baidu-yijian-vision" returned zero results because all four
+    // prefix indexes only match the *first* token. The new search index
+    // should match any token at any position.
+    const skill = makeSkillDoc({
+      id: "skills:baidu-yijian-vision",
+      slug: "baidu-yijian-vision",
+      displayName: "Baidu Yijian Vision",
+    });
+    const ctx = makeDirectPrefixCtx([skill]);
+
+    const result = await directPrefixSkillMatchesHandler(ctx, {
+      query: "yijian",
+      limit: 10,
+    });
+
+    expect(result.map((entry) => entry.skill.slug)).toEqual(["baidu-yijian-vision"]);
+    expect(ctx.usedSearchIndexes).toEqual(
+      expect.arrayContaining(["search_by_display_name", "search_by_slug"]),
+    );
+  });
+
+  it("recalls non-first-token displayName matches via the full-text search index", async () => {
+    // Companion case to the slug repro above: a query that only matches
+    // the displayName (not the slug) at a non-first position must still
+    // surface the skill.
+    const skill = makeSkillDoc({
+      id: "skills:baidu-yijian-vision",
+      slug: "baidu-yijian-vision",
+      displayName: "Baidu Yijian Vision",
+    });
+    const ctx = makeDirectPrefixCtx([skill]);
+
+    const result = await directPrefixSkillMatchesHandler(ctx, {
+      query: "Vision",
+      limit: 10,
+    });
+
+    expect(result.map((entry) => entry.skill.slug)).toEqual(["baidu-yijian-vision"]);
+  });
+
+  it("does not return suspicious skills via full-text search when nonSuspiciousOnly is set", async () => {
+    // Even though the full-text search would token-match the suspicious
+    // skill, the filterField `isSuspicious=false` plus the post-hydration
+    // `isSkillSuspicious` guard must keep it out of the results.
+    const clean = makeSkillDoc({
+      id: "skills:clean",
+      slug: "baidu-yijian-vision",
+      displayName: "Baidu Yijian Vision",
+    });
+    const flagged = makeSkillDoc({
+      id: "skills:flagged",
+      slug: "shady-yijian-trick",
+      displayName: "Shady Yijian Trick",
+      moderationFlags: ["flagged.suspicious"],
+    });
+    const ctx = makeDirectPrefixCtx([clean, flagged]);
+
+    const result = await directPrefixSkillMatchesHandler(ctx, {
+      query: "yijian",
+      nonSuspiciousOnly: true,
+      limit: 10,
+    });
+
+    expect(result.map((entry) => entry.skill.slug)).toEqual(["baidu-yijian-vision"]);
+  });
+
+  it("does not return soft-deleted skills via full-text search", async () => {
+    const active = makeSkillDoc({
+      id: "skills:active",
+      slug: "baidu-yijian-vision",
+      displayName: "Baidu Yijian Vision",
+    });
+    const softDeleted = makeSkillDoc({
+      id: "skills:deleted",
+      slug: "deleted-yijian-tool",
+      displayName: "Deleted Yijian Tool",
+      softDeletedAt: 123,
+    });
+    const ctx = makeDirectPrefixCtx([active, softDeleted]);
+
+    const result = await directPrefixSkillMatchesHandler(ctx, {
+      query: "yijian",
+      limit: 10,
+    });
+
+    expect(result.map((entry) => entry.skill.slug)).toEqual(["baidu-yijian-vision"]);
+  });
+
+  it("dedupes skills matched by both legacy prefix indexes and the new full-text index", async () => {
+    // First-token queries hit *all six* recall paths (4 prefix + 2 full-text).
+    // The skillId-based filter inside `directPrefixSkillMatches` must prevent
+    // the same skill from being emitted multiple times in the final list.
+    const skill = makeSkillDoc({
+      id: "skills:baidu-yijian-vision",
+      slug: "baidu-yijian-vision",
+      displayName: "Baidu Yijian Vision",
+    });
+    const ctx = makeDirectPrefixCtx([skill]);
+
+    const result = await directPrefixSkillMatchesHandler(ctx, {
+      query: "baidu",
+      limit: 10,
+    });
+
+    expect(result).toHaveLength(1);
+    expect(result[0].skill.slug).toBe("baidu-yijian-vision");
+    // Sanity: both legacy prefix indexes and the new full-text indexes were
+    // queried, so the dedup is doing real work, not just a no-op pass-through.
+    expect(ctx.usedIndexes.length).toBeGreaterThanOrEqual(4);
+    expect(ctx.usedSearchIndexes.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it("rejects multi-token full-text candidates when only some tokens match (AND semantics)", async () => {
+    // Convex `withSearchIndex(...).search(field, q)` is OR-disjunctive over
+    // tokens: a query like "yijian vision" can return rows that contain
+    // *either* token. Without an application-layer AND gate, a `vision`-only
+    // distractor would surface as a "direct prefix match" alongside the
+    // genuine all-tokens hit. The handler must filter the full-text path
+    // through `matchesExactTokens` so only skills whose text contains every
+    // query token survive.
+    const distractor = makeSkillDoc({
+      id: "skills:cv-expert",
+      slug: "computer-vision-expert",
+      displayName: "Computer Vision Expert",
+    });
+    const target = makeSkillDoc({
+      id: "skills:baidu-yijian-vision",
+      slug: "baidu-yijian-vision",
+      displayName: "Baidu Yijian Vision",
+    });
+    const ctx = makeDirectPrefixCtx([distractor, target]);
+
+    const result = await directPrefixSkillMatchesHandler(ctx, {
+      query: "yijian vision",
+      limit: 10,
+    });
+
+    expect(result.map((entry) => entry.skill.slug)).toEqual(["baidu-yijian-vision"]);
+  });
+
+  it("returns nothing when no single skill contains all query tokens", async () => {
+    // Each skill matches exactly one token of the multi-token query. The
+    // disjunctive search index would yield both, but the AND gate must drop
+    // them — no skill in the corpus contains *both* `yijian` and `vision`.
+    const onlyVision = makeSkillDoc({
+      id: "skills:cv-expert",
+      slug: "computer-vision-expert",
+      displayName: "Computer Vision Expert",
+    });
+    const onlyYijian = makeSkillDoc({
+      id: "skills:yijian-misc",
+      slug: "yijian-misc-tool",
+      displayName: "Yijian Misc Tool",
+    });
+    const ctx = makeDirectPrefixCtx([onlyVision, onlyYijian]);
+
+    const result = await directPrefixSkillMatchesHandler(ctx, {
+      query: "yijian vision",
+      limit: 10,
+    });
+
+    expect(result).toEqual([]);
   });
 
   it("applies highlightedOnly filtering in lexical fallback", async () => {
@@ -192,6 +404,27 @@ describe("search helpers", () => {
     );
   });
 
+  it("uses the requested fallback limit as the digest scan budget", async () => {
+    const ctx = makeLexicalCtx({
+      exactSlugSkill: null,
+      recentSkills: [
+        makeSkillDoc({ id: "skills:updated", slug: "orf-updated", displayName: "ORF Updated" }),
+      ],
+      recentByCreated: [
+        makeSkillDoc({ id: "skills:created", slug: "orf-created", displayName: "ORF Created" }),
+      ],
+    });
+
+    await lexicalFallbackSkillsHandler(ctx, {
+      query: "orf",
+      queryTokens: ["orf"],
+      limit: 25,
+      skipExactSlugLookup: true,
+    });
+
+    expect(ctx.takeLimits).toEqual([25, 25]);
+  });
+
   it("includes exact slug match from by_slug even when recent scan is empty", async () => {
     const exactSlugSkill = makeSkillDoc({ id: "skills:orf", slug: "orf", displayName: "ORF" });
     const ctx = makeLexicalCtx({
@@ -267,6 +500,7 @@ describe("search helpers", () => {
     const runQuery = vi
       .fn()
       .mockResolvedValueOnce(null) // getExactSkillSlugMatch
+      .mockResolvedValueOnce([]) // directPrefixSkillMatches
       .mockResolvedValueOnce(vectorEntries) // hydrateResults
       .mockResolvedValueOnce(fallbackEntries); // lexicalFallbackSkills
 
@@ -320,6 +554,7 @@ describe("search helpers", () => {
     const runQuery = vi
       .fn()
       .mockResolvedValueOnce(null) // getExactSkillSlugMatch
+      .mockResolvedValueOnce([]) // directPrefixSkillMatches
       .mockResolvedValueOnce(vectorEntries) // hydrateResults
       .mockResolvedValueOnce(fallbackEntries); // lexicalFallbackSkills
 
@@ -336,13 +571,93 @@ describe("search helpers", () => {
       { query: "image", limit: 25 },
     );
 
-    expect(runQuery).toHaveBeenCalledTimes(3);
-    expect(runQuery).toHaveBeenLastCalledWith(
-      expect.anything(),
-      expect.objectContaining({ query: "image", limit: 400 }),
+    expect(runQuery).toHaveBeenCalledTimes(4);
+    expect(runQuery.mock.calls.at(-1)?.[1]).toEqual(
+      expect.objectContaining({ query: "image", limit: 200 }),
     );
     expect(result).toHaveLength(25);
     expect(result.some((entry) => entry.skill.slug === "antigravity-image-generator")).toBe(true);
+  });
+
+  it("orders lexical name matches above summary-only matches before popularity", async () => {
+    generateEmbeddingMock.mockResolvedValueOnce([0, 1, 2]);
+    const exactName = {
+      skill: makePublicSkill({
+        id: "skills:postgres",
+        slug: "postgres",
+        displayName: "Postgres",
+        downloads: 0,
+      }),
+      version: null,
+      ownerHandle: "owner",
+      owner: null,
+    };
+    const summaryOnly = {
+      skill: {
+        ...makePublicSkill({
+          id: "skills:database-tools",
+          slug: "database-tools",
+          displayName: "Database Tools",
+          downloads: 1_000_000_000,
+        }),
+        summary: "Postgres database helper.",
+      },
+      version: null,
+      ownerHandle: "owner",
+      owner: null,
+    };
+    const runQuery = vi
+      .fn()
+      .mockResolvedValueOnce(null) // getExactSkillSlugMatch
+      .mockResolvedValueOnce([]) // directPrefixSkillMatches
+      .mockResolvedValueOnce([summaryOnly, exactName]); // lexicalFallbackSkills
+
+    const result = await searchSkillsHandler(
+      {
+        vectorSearch: vi.fn().mockResolvedValue([]),
+        runQuery,
+      },
+      { query: "postgres", limit: 2 },
+    );
+
+    expect(result.map((entry) => entry.skill.slug)).toEqual(["postgres", "database-tools"]);
+    expect(result[0]).not.toHaveProperty("rankTier");
+    expect(result[0]).not.toHaveProperty("matchReason");
+  });
+
+  it("does not let vector recall make short summary-only skills eligible", async () => {
+    generateEmbeddingMock.mockResolvedValueOnce([0, 1, 2]);
+    const summaryOnly = {
+      embeddingId: "skillEmbeddings:ai",
+      skill: {
+        ...makePublicSkill({
+          id: "skills:ai-summary",
+          slug: "general-helper",
+          displayName: "General Helper",
+          downloads: 1_000,
+        }),
+        summary: "AI helper for teams.",
+      },
+      version: null,
+      ownerHandle: "owner",
+      owner: null,
+    };
+    const runQuery = vi
+      .fn()
+      .mockResolvedValueOnce(null) // getExactSkillSlugMatch
+      .mockResolvedValueOnce([]) // directPrefixSkillMatches
+      .mockResolvedValueOnce([summaryOnly]) // hydrateResults
+      .mockResolvedValueOnce([]); // lexicalFallbackSkills
+
+    const result = await searchSkillsHandler(
+      {
+        vectorSearch: vi.fn().mockResolvedValue([{ _id: "skillEmbeddings:ai", _score: 0.99 }]),
+        runQuery,
+      },
+      { query: "ai", limit: 10 },
+    );
+
+    expect(result).toEqual([]);
   });
 
   it("always includes an exact slug match even when vector exact matches already fill the limit", async () => {
@@ -376,6 +691,7 @@ describe("search helpers", () => {
     const runQuery = vi
       .fn()
       .mockResolvedValueOnce(exactSlugEntry)
+      .mockResolvedValueOnce([])
       .mockResolvedValueOnce(vectorEntries)
       .mockResolvedValueOnce([]);
 
@@ -394,7 +710,7 @@ describe("search helpers", () => {
 
     expect(result).toHaveLength(10);
     expect(result[0].skill.slug).toBe("skill-downloader");
-    expect(runQuery).toHaveBeenCalledTimes(3);
+    expect(runQuery).toHaveBeenCalledTimes(4);
   });
 
   it("omits exact slug injection when nonSuspiciousOnly excludes it", async () => {
@@ -418,6 +734,7 @@ describe("search helpers", () => {
     const runQuery = vi
       .fn()
       .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce([])
       .mockResolvedValueOnce(vectorEntries)
       .mockResolvedValueOnce([]);
 
@@ -469,6 +786,7 @@ describe("search helpers", () => {
     const runQuery = vi
       .fn()
       .mockResolvedValueOnce(exactSlugEntry)
+      .mockResolvedValueOnce([])
       .mockResolvedValueOnce(vectorEntries)
       .mockResolvedValueOnce([]);
 
@@ -490,6 +808,7 @@ describe("search helpers", () => {
     const runQuery = vi
       .fn()
       .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce([])
       .mockResolvedValueOnce([
         {
           embeddingId: "skillEmbeddings:crypto",
@@ -573,6 +892,7 @@ describe("search helpers", () => {
     const runQuery = vi
       .fn()
       .mockResolvedValueOnce(exactSlugEntry)
+      .mockResolvedValueOnce([])
       .mockResolvedValueOnce(vectorEntries)
       .mockResolvedValueOnce([]);
 
@@ -610,6 +930,7 @@ describe("search helpers", () => {
     const runQuery = vi
       .fn()
       .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce([])
       .mockImplementationOnce(async (_ref: unknown, args: { skipExactSlugLookup?: boolean }) => {
         expect(args.skipExactSlugLookup).toBe(true);
         return fallbackEntries;
@@ -985,17 +1306,18 @@ describe("search helpers", () => {
     expect(result[0].skill.slug).toBe("fallback-skill");
   });
 
-  it("hydrates the stable max vector window for ordinary load-more searches", async () => {
+  it("hydrates a bounded vector window for ordinary load-more searches", async () => {
     generateEmbeddingMock.mockResolvedValueOnce([0, 1, 2]);
 
-    // Ordinary first-page and load-more searches use a stable recall floor, so
-    // candidateLimit starts at the Convex vector maximum.
-    const batch = Array.from({ length: 256 }, (_, i) => ({
+    const batch = Array.from({ length: 128 }, (_, i) => ({
       _id: `skillEmbeddings:e${i}`,
       _score: 0.5 - i * 0.001,
     }));
 
-    const vectorSearchMock = vi.fn().mockResolvedValueOnce(batch);
+    const vectorSearchMock = vi.fn(
+      async (_table: unknown, _index: unknown, opts: { limit: number }) =>
+        batch.slice(0, opts.limit),
+    );
 
     const hydrateCalls: string[][] = [];
     const runQuery = vi.fn(
@@ -1026,9 +1348,10 @@ describe("search helpers", () => {
       { query: "test", limit: 50 },
     );
 
-    expect(vectorSearchMock).toHaveBeenCalledTimes(1);
-    expect(hydrateCalls).toHaveLength(1);
-    expect(hydrateCalls[0]).toHaveLength(256);
+    expect(vectorSearchMock).toHaveBeenCalledTimes(2);
+    expect(hydrateCalls).toHaveLength(2);
+    expect(hydrateCalls[0]).toHaveLength(100);
+    expect(hydrateCalls[1]).toHaveLength(28);
   });
 
   it("merges fallback matches without duplicate skill ids", () => {
@@ -1075,6 +1398,7 @@ describe("search helpers", () => {
 
     const runQuery = vi
       .fn()
+      .mockResolvedValueOnce([]) // directPrefixSkillMatches
       .mockResolvedValueOnce([
         {
           embeddingId: "skillEmbeddings:a",
@@ -1135,7 +1459,7 @@ describe("soul search", () => {
     expect(result[0].soul.slug).toBe("orf");
     expect(runQuery).toHaveBeenCalledWith(
       expect.anything(),
-      expect.objectContaining({ query: "orf", queryTokens: ["orf"] }),
+      expect.objectContaining({ query: "orf", queryTokens: ["orf"], limit: 100 }),
     );
   });
 
@@ -1159,11 +1483,12 @@ describe("soul search", () => {
     expect(result).toHaveLength(1);
     expect(result[0].soul.slug).toBe("orf-active");
     expect(ctx.usedIndexes).toContain("by_active_updated");
+    expect(ctx.takeLimits).toEqual([10]);
   });
 
   it("hydrates only new soul embedding ids across vector iterations", async () => {
     generateEmbeddingMock.mockResolvedValueOnce([0, 1, 2]);
-    const firstBatch = Array.from({ length: 200 }, (_, i) => ({
+    const firstBatch = Array.from({ length: 100 }, (_, i) => ({
       _id: i === 0 ? "soulEmbeddings:a" : `soulEmbeddings:filler${i}`,
       _score: i === 0 ? 0.9 : 0.1,
     }));
@@ -1310,8 +1635,10 @@ function makeLexicalCtx(params: {
   const digestByUpdated = toDigestRows(params.recentSkills);
   const digestByCreated = toDigestRows(params.recentByCreated ?? []);
   const usedIndexes: string[] = [];
+  const takeLimits: number[] = [];
   return {
     usedIndexes,
+    takeLimits,
     db: {
       query: vi.fn((table: string) => {
         if (table === "skills") {
@@ -1334,14 +1661,20 @@ function makeLexicalCtx(params: {
               if (index === "by_active_updated" || index === "by_nonsuspicious_updated") {
                 return {
                   order: () => ({
-                    take: vi.fn().mockResolvedValue(digestByUpdated),
+                    take: vi.fn((limit: number) => {
+                      takeLimits.push(limit);
+                      return Promise.resolve(digestByUpdated);
+                    }),
                   }),
                 };
               }
               if (index === "by_active_created" || index === "by_nonsuspicious_created") {
                 return {
                   order: () => ({
-                    take: vi.fn().mockResolvedValue(digestByCreated),
+                    take: vi.fn((limit: number) => {
+                      takeLimits.push(limit);
+                      return Promise.resolve(digestByCreated);
+                    }),
                   }),
                 };
               }
@@ -1360,13 +1693,130 @@ function makeLexicalCtx(params: {
   };
 }
 
+function makeDirectPrefixCtx(skills: Array<ReturnType<typeof makeSkillDoc>>) {
+  const firstToken = (value: string) => value.toLowerCase().match(/[a-z0-9]+/)?.[0];
+  // Token-level splitter that mirrors Convex full-text inverted index behavior:
+  // any alphanumeric run of length >= 1 becomes a token, regardless of position.
+  const tokensOf = (value: string): string[] =>
+    (value.toLowerCase().match(/[a-z0-9]+/g) ?? []).filter(Boolean);
+  const digestRows = skills.map((skill) => ({
+    ...skill,
+    skillId: skill._id,
+    normalizedSlug: skill.slug.toLowerCase(),
+    normalizedSlugFirstToken: firstToken(skill.slug),
+    normalizedDisplayName: skill.displayName.toLowerCase(),
+    normalizedDisplayNameFirstToken: firstToken(skill.displayName),
+    isSuspicious: (skill.moderationFlags ?? []).includes("flagged.suspicious"),
+    ownerHandle: "owner",
+    ownerName: "Owner",
+    ownerDisplayName: "Owner",
+    ownerImage: undefined,
+  }));
+  const usedIndexes: string[] = [];
+  const usedSearchIndexes: string[] = [];
+  return {
+    usedIndexes,
+    usedSearchIndexes,
+    db: {
+      query: vi.fn((table: string) => {
+        if (table !== "skillSearchDigest") throw new Error(`Unexpected table ${table}`);
+        return {
+          withIndex: (index: string, builder: (q: unknown) => unknown) => {
+            usedIndexes.push(index);
+            const range: Record<string, string> = {};
+            const q = {
+              eq: () => q,
+              gte: (field: string, value: string) => {
+                range[field] = value;
+                return q;
+              },
+              lt: () => q,
+            };
+            builder(q);
+            return {
+              take: vi.fn(async () => {
+                const field = index.includes("first_token")
+                  ? index.includes("slug")
+                    ? "normalizedSlugFirstToken"
+                    : "normalizedDisplayNameFirstToken"
+                  : index.includes("slug")
+                    ? "normalizedSlug"
+                    : "normalizedDisplayName";
+                const prefix = range[field] ?? "";
+                return digestRows.filter((digest) => (digest[field] ?? "").startsWith(prefix));
+              }),
+            };
+          },
+          // Mock for the new `searchIndex`-backed full-text queries added to
+          // `directPrefixSkillMatches`. Mirrors Convex's documented semantics:
+          // tokenize on alphanumeric runs (case-insensitive) and match a row
+          // when *any* token in the search field equals *any* token of the
+          // user query — i.e. position-independent, unlike `withIndex` which
+          // only does string-prefix matches against a normalized field.
+          withSearchIndex: (
+            indexName: string,
+            builder: (q: {
+              search: (field: string, query: string) => unknown;
+              eq: (field: string, value: unknown) => unknown;
+            }) => unknown,
+          ) => {
+            usedSearchIndexes.push(indexName);
+            let searchField = "";
+            let searchQuery = "";
+            const filters: Array<{ field: string; value: unknown }> = [];
+            const q = {
+              search: (field: string, query: string) => {
+                searchField = field;
+                searchQuery = query;
+                return q;
+              },
+              eq: (field: string, value: unknown) => {
+                filters.push({ field, value });
+                return q;
+              },
+            };
+            builder(q);
+            return {
+              take: vi.fn(async () => {
+                const queryTokens = new Set(tokensOf(searchQuery));
+                if (queryTokens.size === 0) return [];
+                return digestRows.filter((digest) => {
+                  for (const filter of filters) {
+                    if ((digest as Record<string, unknown>)[filter.field] !== filter.value) {
+                      return false;
+                    }
+                  }
+                  const fieldValue =
+                    (digest as unknown as Record<string, string | undefined>)[searchField] ?? "";
+                  const fieldTokens = new Set(tokensOf(fieldValue));
+                  for (const token of queryTokens) {
+                    if (fieldTokens.has(token)) return true;
+                  }
+                  return false;
+                });
+              }),
+            };
+          },
+        };
+      }),
+      get: vi.fn(async (id: string) => {
+        if (id.startsWith("users:")) return { _id: id, handle: "owner" };
+        if (id.startsWith("skillVersions:")) return { _id: id, version: "1.0.0" };
+        return null;
+      }),
+    },
+  };
+}
+
 function makeSoulLexicalCtx(params: {
   exactSlugSoul: ReturnType<typeof makeSoulDoc> | null;
   recentSouls: Array<ReturnType<typeof makeSoulDoc>>;
 }) {
   const usedIndexes: string[] = [];
+  const takeLimits: number[] = [];
   return {
     usedIndexes,
+    takeLimits,
     db: {
       query: vi.fn((table: string) => {
         if (table !== "souls") throw new Error(`Unexpected table ${table}`);
@@ -1381,7 +1831,10 @@ function makeSoulLexicalCtx(params: {
             if (index === "by_active_updated") {
               return {
                 order: () => ({
-                  take: vi.fn().mockResolvedValue(params.recentSouls),
+                  take: vi.fn((limit: number) => {
+                    takeLimits.push(limit);
+                    return Promise.resolve(params.recentSouls);
+                  }),
                 }),
               };
             }

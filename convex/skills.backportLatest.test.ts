@@ -257,9 +257,7 @@ function buildDb(skill: SkillDoc, captured: Captured) {
         return {
           withIndex: (
             name: string,
-            build:
-              | ((q: { eq: (field: string, value: string) => unknown }) => unknown)
-              | undefined,
+            build: ((q: { eq: (field: string, value: string) => unknown }) => unknown) | undefined,
           ) => {
             if (name !== "by_version") {
               throw new Error(`unexpected skillEmbeddings index ${name}`);
@@ -328,8 +326,7 @@ function buildDb(skill: SkillDoc, captured: Captured) {
       // convex-helpers `triggers` calls innerDb.patch(tableName, id, value)
       // for tables with registered triggers (e.g. "skills"); otherwise it
       // falls back to innerDb.patch(id, value).
-      const [id, value] =
-        arg2 !== undefined ? [arg1 as string, arg2] : [arg0 as string, arg1];
+      const [id, value] = arg2 !== undefined ? [arg1 as string, arg2] : [arg0 as string, arg1];
 
       captured.allPatches.push({
         id: id,
@@ -397,6 +394,38 @@ function buildCtx(skill: SkillDoc) {
 }
 
 describe("skills.insertVersion latest-tag protection", () => {
+  it("stores clawScanNote on the inserted immutable skill version", async () => {
+    const skill = buildExistingSkill();
+    const { ctx, captured } = buildCtx(skill);
+
+    await insertVersionHandler(
+      ctx as never,
+      buildPublishArgs({
+        clawScanNote: "The shell command is constrained to this skill folder.",
+      }) as never,
+    );
+
+    expect(captured.versionInserted).toMatchObject({
+      clawScanNote: "The shell command is constrained to this skill folder.",
+    });
+  });
+
+  it("rejects clawScanNote values beyond the write-path limit", async () => {
+    const skill = buildExistingSkill();
+    const { ctx, captured } = buildCtx(skill);
+
+    await expect(
+      insertVersionHandler(
+        ctx as never,
+        buildPublishArgs({
+          clawScanNote: "x".repeat(4001),
+        }) as never,
+      ),
+    ).rejects.toThrow("ClawScan note must be at most 4000 characters.");
+
+    expect(captured.versionInserted).toBeNull();
+  });
+
   it("promotes latest when publishing a strictly higher version", async () => {
     const skill = buildExistingSkill();
     const { ctx, captured } = buildCtx(skill);
@@ -474,9 +503,7 @@ describe("skills.insertVersion latest-tag protection", () => {
     expect(finalPatch.capabilityTags).toEqual(["cap-v2"]);
 
     // `tags.latest` still points to the previous version.
-    expect(finalPatch.tags).toEqual(
-      expect.objectContaining({ latest: PREV_LATEST_VERSION_ID }),
-    );
+    expect(finalPatch.tags).toEqual(expect.objectContaining({ latest: PREV_LATEST_VERSION_ID }));
 
     // versions counter still increments on every publish, regardless of version order.
     expect(finalPatch.stats).toMatchObject({ versions: 2 });
@@ -486,10 +513,7 @@ describe("skills.insertVersion latest-tag protection", () => {
     const skill = buildExistingSkill();
     const { ctx, captured } = buildCtx(skill);
 
-    await insertVersionHandler(
-      ctx as never,
-      buildPublishArgs({ version: "1.0.1" }) as never,
-    );
+    await insertVersionHandler(ctx as never, buildPublishArgs({ version: "1.0.1" }) as never);
 
     // New version embedding is NOT marked latest.
     expect(captured.embeddingInserts).toHaveLength(1);
@@ -566,9 +590,7 @@ describe("skills.insertVersion latest-tag protection", () => {
 
     const finalPatch = captured.skillPatches.at(-1) as Record<string, unknown>;
     expect(finalPatch.latestVersionId).toBe(PREV_LATEST_VERSION_ID);
-    expect(finalPatch.tags).toEqual(
-      expect.objectContaining({ latest: PREV_LATEST_VERSION_ID }),
-    );
+    expect(finalPatch.tags).toEqual(expect.objectContaining({ latest: PREV_LATEST_VERSION_ID }));
     // The case-variant tag must not leak into the stored tag map either.
     const tags = finalPatch.tags as Record<string, string>;
     expect(tags.LaTeSt).toBeUndefined();
@@ -685,9 +707,7 @@ describe("skills.insertVersion latest-tag protection", () => {
     const finalPatch = captured.skillPatches.at(-1) as Record<string, unknown>;
     expect(finalPatch.latestVersionId).toBe(NEW_VERSION_ID);
     expect(finalPatch.latestVersionSummary).toMatchObject({ version: "1.0.0" });
-    expect(finalPatch.tags).toEqual(
-      expect.objectContaining({ latest: NEW_VERSION_ID }),
-    );
+    expect(finalPatch.tags).toEqual(expect.objectContaining({ latest: NEW_VERSION_ID }));
     expect(captured.embeddingInserts[0]).toMatchObject({ isLatest: true });
   });
 

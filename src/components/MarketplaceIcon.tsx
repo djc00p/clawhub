@@ -1,10 +1,18 @@
-import { FileText, Package, Plug, User } from "lucide-react";
+import { MARKETPLACE_KIND_ICONS, type MarketplaceIconKind } from "../lib/marketplaceIcons";
+import { parseSkillIcon } from "../lib/skillIcon";
 
 type MarketplaceIconProps = {
-  kind: "skill" | "plugin" | "soul" | "user";
+  kind: MarketplaceIconKind;
   label: string;
   imageUrl?: string | null;
-  size?: "sm" | "md";
+  /**
+   * Skill custom-icon protocol string (e.g. `lucide:Plug`). Only honoured
+   * when `kind === "skill"`; for other kinds the prop is ignored. Falls
+   * back to the default kind icon when the value cannot be parsed or is
+   * not in the client allow-list.
+   */
+  icon?: string | null;
+  size?: "xs" | "sm" | "md";
 };
 
 const TONES = [
@@ -20,31 +28,20 @@ function hashTone(label: string) {
   return TONES[sum % TONES.length] ?? TONES[0];
 }
 
-function getIcon(kind: MarketplaceIconProps["kind"]) {
-  switch (kind) {
-    case "plugin":
-      return Plug;
-    case "soul":
-      return FileText;
-    case "user":
-      return User;
-    default:
-      return Package;
-  }
-}
-
 export function MarketplaceIcon({
   kind,
   label,
   imageUrl,
+  icon,
   size = "sm",
 }: MarketplaceIconProps) {
-  const Icon = getIcon(kind);
+  const customIcon = kind === "skill" ? parseSkillIcon(icon) : null;
+  const Icon = MARKETPLACE_KIND_ICONS[kind];
   const tone = hashTone(label);
 
   return (
     <span
-      className={`marketplace-icon marketplace-icon-${size}`}
+      className={`marketplace-icon marketplace-icon-${kind} marketplace-icon-${size}`}
       style={
         {
           "--marketplace-icon-accent": tone.accent,
@@ -55,6 +52,8 @@ export function MarketplaceIcon({
     >
       {imageUrl ? (
         <img className="marketplace-icon-image" src={imageUrl} alt="" loading="lazy" />
+      ) : customIcon?.kind === "lucide" ? (
+        <customIcon.component className="marketplace-icon-glyph" strokeWidth={1.8} />
       ) : (
         <Icon className="marketplace-icon-glyph" strokeWidth={1.8} />
       )}

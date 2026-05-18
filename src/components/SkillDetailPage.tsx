@@ -1,14 +1,17 @@
-import { useNavigate } from "@tanstack/react-router";
+import { useAuthActions } from "@convex-dev/auth/react";
+import { useNavigate, useRouter } from "@tanstack/react-router";
 import type { ClawdisSkillMetadata } from "clawhub-schema";
 import { useAction, useMutation, useQuery } from "convex/react";
-import type { ComponentProps } from "react";
+import { ArrowLeft, TriangleAlert } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { api } from "../../convex/_generated/api";
 import type { Doc, Id } from "../../convex/_generated/dataModel";
+import { getUserFacingAuthError } from "../lib/authErrorMessage";
 import { getUserFacingConvexError } from "../lib/convexError";
 import { canManageSkill, isModerator } from "../lib/roles";
 import type { SkillBySlugResult, SkillPageInitialData } from "../lib/skillPage";
+import { clearAuthError, setAuthError } from "../lib/useAuthError";
 import { useAuthStatus } from "../lib/useAuthStatus";
 import { ClientOnly } from "./ClientOnly";
 import { DetailBody, DetailPageShell } from "./DetailPageShell";
@@ -24,11 +27,11 @@ import {
   stripFrontmatter,
 } from "./skillDetailUtils";
 import { SkillHeader } from "./SkillHeader";
+import { buildSkillInstallTabs } from "./SkillInstallCard";
 import { SkillOwnershipPanel } from "./SkillOwnershipPanel";
 import { SkillReportDialog } from "./SkillReportDialog";
-import { Badge } from "./ui/badge";
-import { Button } from "./ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "./ui/card";
+import { Alert, AlertDescription } from "./ui/alert";
+import { Card } from "./ui/card";
 
 type SkillDetailPageProps = {
   slug: string;
@@ -41,6 +44,22 @@ type SkillDetailPageProps = {
 type SkillFile = Doc<"skillVersions">["files"][number];
 
 const SHOW_SKILL_COMMENTS = false;
+
+function tabFromHash(hash: string): DetailTab {
+  const normalized = hash.replace(/^#/, "").toLowerCase();
+  if (normalized === "files") return "files";
+  if (normalized === "compare") return "compare";
+  if (normalized === "versions") return "versions";
+  if (
+    normalized === "runtime" ||
+    normalized === "dependencies" ||
+    normalized === "install" ||
+    normalized === "links"
+  ) {
+    return normalized;
+  }
+  return "readme";
+}
 
 function formatReportError(error: unknown) {
   if (error && typeof error === "object" && "data" in error) {
@@ -70,6 +89,69 @@ function formatReportError(error: unknown) {
   return "Unable to submit report. Please try again.";
 }
 
+function buildStaffVisibilityAlert({
+  artifactKind,
+  moderationReason,
+  moderationNote,
+  isAutoHidden,
+  isRemoved,
+  isSoftDeleted,
+  modInfo,
+}: {
+  artifactKind: "skill" | "plugin";
+  moderationReason?: string;
+  moderationNote?: string;
+  isAutoHidden: boolean;
+  isRemoved: boolean;
+  isSoftDeleted: boolean;
+  modInfo?: { isMalwareBlocked: boolean; isSuspicious: boolean } | null;
+}) {
+  if (isRemoved) {
+    return `This ${artifactKind} was removed from public view by moderation.`;
+  }
+
+  let reason = "by moderation.";
+  if (isAutoHidden) {
+    reason = "because it was automatically hidden after multiple reports.";
+  } else if (moderationReason === "manual.report") {
+    reason = "because staff reviewed a report.";
+  } else if (moderationReason === "pending.scan" || moderationReason === "pending.scan.stale") {
+    reason = "while security checks finish.";
+  } else if (moderationReason === "quality.low") {
+    reason = "because it is on quality hold.";
+  } else if (moderationReason === "user.banned") {
+    reason = "because the publisher account is banned.";
+  } else if (moderationReason === "user.moderation") {
+    reason = "because the publisher account is under moderation.";
+  } else if (moderationReason === "owner.merged") {
+    reason = "because it was merged into another skill.";
+  } else if (moderationReason === "security.redaction") {
+    reason = "because it was hidden for security redaction.";
+  } else if (moderationReason?.startsWith("scanner.") && moderationReason.endsWith(".malicious")) {
+    reason = "because automated security checks found security warnings or malicious content.";
+  } else if (moderationReason?.startsWith("scanner.") && moderationReason.endsWith(".suspicious")) {
+    reason = "because automated security checks found security warnings or malicious content.";
+  } else if (modInfo?.isMalwareBlocked) {
+    reason = "because automated security checks found security warnings or malicious content.";
+  } else if (modInfo?.isSuspicious) {
+    reason = "because automated security checks found security warnings or malicious content.";
+  } else if (isSoftDeleted && !moderationReason) {
+    reason = "because it was unpublished.";
+  }
+
+  const base = `This ${artifactKind} is hidden from public view ${reason}`;
+  if (!moderationNote) return base;
+
+  const normalizedNote = moderationNote.trim();
+  const generatedNotes = new Set([
+    "Auto-hidden after 4 unique reports.",
+    "Removed from public view.",
+    "Hidden from public view.",
+  ]);
+  if (!normalizedNote || generatedNotes.has(normalizedNote)) return base;
+  return `${base} Moderator note: ${normalizedNote}`;
+}
+
 export function SkillDetailPage({
   slug,
   canonicalOwner,
@@ -78,7 +160,9 @@ export function SkillDetailPage({
   mode = "detail",
 }: SkillDetailPageProps) {
   const navigate = useNavigate();
+  const router = useRouter();
   const { isAuthenticated, me } = useAuthStatus();
+  const { signIn } = useAuthActions();
   const initialResult = initialData?.result ?? undefined;
 
   const isStaff = isModerator(me);
@@ -92,9 +176,10 @@ export function SkillDetailPage({
 
   const toggleStar = useMutation(api.stars.toggle);
   const reportSkill = useMutation(api.skills.report);
-  const updateTags = useMutation(api.skills.updateTags);
-  const deleteTags = useMutation(api.skills.deleteTags);
-  const requestRescan = useMutation(api.skills.requestRescan);
+  const updateSummary = useMutation(api.skills.updateSummary);
+  const updatePublisherNoteAndRequestRescan = useMutation(
+    api.skills.updateLatestClawScanNoteAndRequestRescan,
+  );
   const getReadme = useAction(api.skills.getReadme);
   const myPublishers = useQuery(api.publishers.listMine) as
     | Array<{ publisher: { _id: Id<"publishers"> }; role: string }>
@@ -105,14 +190,19 @@ export function SkillDetailPage({
   const [loadedReadmeVersionId, setLoadedReadmeVersionId] = useState<Id<"skillVersions"> | null>(
     initialResult?.latestVersion?._id ?? null,
   );
-  const [tagName, setTagName] = useState("latest");
-  const [tagVersionId, setTagVersionId] = useState<Id<"skillVersions"> | "">("");
   const [activeTab, setActiveTab] = useState<DetailTab>("readme");
   const [shouldPrefetchCompare, setShouldPrefetchCompare] = useState(false);
   const [isReportDialogOpen, setIsReportDialogOpen] = useState(false);
   const [reportReason, setReportReason] = useState("");
   const [reportError, setReportError] = useState<string | null>(null);
   const [isSubmittingReport, setIsSubmittingReport] = useState(false);
+  const [optimisticStar, setOptimisticStar] = useState<{
+    skillId: Id<"skills">;
+    starred: boolean;
+    baselineStarred: boolean;
+    baselineStars: number;
+    delta: number;
+  } | null>(null);
 
   const isLoadingSkill = isStaff ? staffResult === undefined : result === undefined;
   const skill = result?.skill;
@@ -135,6 +225,21 @@ export function SkillDetailPage({
     api.stars.isStarred,
     isAuthenticated && skill ? { skillId: skill._id } : "skip",
   );
+  const activeOptimisticStar =
+    optimisticStar && skill && optimisticStar.skillId === skill._id ? optimisticStar : null;
+  const effectiveIsStarred = activeOptimisticStar?.starred ?? isStarred;
+  const displayedSkill = useMemo(() => {
+    if (!skill || !activeOptimisticStar) return skill;
+    const currentStars = skill.stats.stars ?? 0;
+    if (currentStars !== activeOptimisticStar.baselineStars) return skill;
+    return {
+      ...skill,
+      stats: {
+        ...skill.stats,
+        stars: Math.max(0, currentStars + activeOptimisticStar.delta),
+      },
+    };
+  }, [activeOptimisticStar, skill]);
 
   const myPublisherIds = useMemo(
     () =>
@@ -143,28 +248,43 @@ export function SkillDetailPage({
       ),
     [myPublishers],
   );
+  const myManagePublisherIds = useMemo(
+    () =>
+      new Set(
+        (Array.isArray(myPublishers) ? myPublishers : [])
+          .filter((entry) => entry.role === "owner" || entry.role === "admin")
+          .map((entry) => entry.publisher._id),
+      ),
+    [myPublishers],
+  );
   const canManage =
     canManageSkill(me, skill) ||
     Boolean(skill?.ownerPublisherId && myPublisherIds.has(skill.ownerPublisherId));
-  const isOwner =
+  const canAccessSettings =
     Boolean(me && skill && me._id === skill.ownerUserId) ||
-    Boolean(skill?.ownerPublisherId && myPublisherIds.has(skill.ownerPublisherId));
+    isStaff ||
+    Boolean(skill?.ownerPublisherId && myManagePublisherIds.has(skill.ownerPublisherId));
   const ownedSkills = useQuery(
     api.skills.list,
-    isOwner && skill
+    canAccessSettings && skill
       ? skill.ownerPublisherId
         ? { ownerPublisherId: skill.ownerPublisherId, limit: 100 }
         : { ownerUserId: skill.ownerUserId, limit: 100 }
       : "skip",
   ) as Array<{ _id: Id<"skills">; slug: string; displayName: string }> | undefined;
-  const canViewOwnerRescanState = isOwner || me?.role === "admin";
-  const rescanState = useQuery(
-    api.skills.getRescanState,
-    canViewOwnerRescanState && skill ? { skillId: skill._id } : "skip",
-  ) as ComponentProps<typeof DetailSecuritySummary>["rescanState"] | undefined;
-
   const ownerHandle = owner?.handle ?? null;
   const ownerParam = ownerHandle?.trim().toLowerCase() || (owner?._id ? String(owner._id) : null);
+  const settingsHref =
+    canAccessSettings && skill
+      ? `${buildSkillHref(ownerHandle, owner?._id ?? null, skill.slug)}/settings`
+      : null;
+  const newVersionHref =
+    canAccessSettings && skill
+      ? `/skills/publish?${new URLSearchParams({
+          updateSlug: skill.slug,
+          ...(ownerHandle ? { ownerHandle } : {}),
+        }).toString()}`
+      : null;
   const canonicalOwnerParam =
     typeof canonicalOwner === "string" ? canonicalOwner.trim().toLowerCase() : null;
   const wantsCanonicalRedirect = Boolean(
@@ -173,6 +293,7 @@ export function SkillDetailPage({
       redirectToCanonical ||
       (canonicalOwnerParam && canonicalOwnerParam !== ownerParam)),
   );
+  const redirectSlug = result?.resolvedSlug ?? skill?.slug ?? slug;
 
   const forkOf = result?.forkOf ?? null;
   const canonical = result?.canonical ?? null;
@@ -211,19 +332,19 @@ export function SkillDetailPage({
       : isHidden
         ? "Hidden"
         : null;
-  const staffModerationNote =
-    staffSkill?.moderationNotes?.trim() ||
-    (staffVisibilityTag
-      ? isAutoHidden
-        ? "Auto-hidden after 4+ unique reports."
-        : isRemoved
-          ? "Removed from public view."
-          : "Hidden from public view."
-      : null);
+  const staffModerationNote = staffVisibilityTag
+    ? buildStaffVisibilityAlert({
+        artifactKind: "skill",
+        moderationReason: staffSkill?.moderationReason,
+        moderationNote: staffSkill?.moderationNotes?.trim(),
+        isAutoHidden,
+        isRemoved,
+        isSoftDeleted: Boolean(staffSkill?.softDeletedAt),
+        modInfo,
+      })
+    : null;
 
-  const versionById = new Map<Id<"skillVersions">, Doc<"skillVersions">>(
-    (diffVersions ?? versions ?? []).map((version) => [version._id, version]),
-  );
+  const latestVersionId = latestVersion?._id ?? null;
 
   const clawdis = (latestVersion?.parsed as { clawdis?: ClawdisSkillMetadata } | undefined)
     ?.clawdis;
@@ -244,48 +365,84 @@ export function SkillDetailPage({
   const latestFiles: SkillFile[] = latestVersion?.files ?? [];
 
   useEffect(() => {
-    if (!wantsCanonicalRedirect || !ownerParam) return;
+    if (!wantsCanonicalRedirect || !ownerParam || !redirectSlug) return;
+    const params = { owner: ownerParam, slug: redirectSlug };
+    if (mode === "settings") {
+      void navigate({
+        to: "/$owner/$slug/settings",
+        params,
+        replace: true,
+      });
+      return;
+    }
     void navigate({
       to: "/$owner/$slug",
-      params: { owner: ownerParam, slug },
+      params,
       replace: true,
     });
-  }, [navigate, ownerParam, slug, wantsCanonicalRedirect]);
+  }, [mode, navigate, ownerParam, redirectSlug, wantsCanonicalRedirect]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return undefined;
+    const syncTabFromHash = () => {
+      setActiveTab(tabFromHash(window.location.hash));
+    };
+    syncTabFromHash();
+    window.addEventListener("hashchange", syncTabFromHash);
+    return () => {
+      window.removeEventListener("hashchange", syncTabFromHash);
+    };
+  }, []);
+
+  // Set of tab IDs that are currently rendered — used to validate hash-driven
+  // navigation so stale bookmarks fall back to readme rather than leaving the
+  // content pane blank.
+  const validTabIds = useMemo<Set<DetailTab>>(() => {
+    const installTabs = buildSkillInstallTabs({ clawdis, osLabels });
+    const baseTabs: DetailTab[] = ["readme", "files", "versions"];
+    if ((versions?.length ?? 0) > 1) baseTabs.push("compare");
+    return new Set([...baseTabs, ...installTabs.map((t) => t.id)]);
+  }, [clawdis, osLabels, versions]);
+
+  useEffect(() => {
+    setActiveTab((prev) => (validTabIds.has(prev) ? prev : "readme"));
+  }, [validTabIds]);
 
   useEffect(() => {
     let cancelled = false;
     if (
-      latestVersion &&
-      !(loadedReadmeVersionId === latestVersion._id && (readme !== null || readmeError !== null))
+      latestVersionId &&
+      !(loadedReadmeVersionId === latestVersionId && (readme !== null || readmeError !== null))
     ) {
       setReadme(null);
       setReadmeError(null);
-      setLoadedReadmeVersionId(latestVersion._id);
+      setLoadedReadmeVersionId(latestVersionId);
 
-      void getReadme({ versionId: latestVersion._id })
+      void getReadme({ versionId: latestVersionId })
         .then((data) => {
           if (cancelled) return;
           setReadme(data.text);
-          setLoadedReadmeVersionId(latestVersion._id);
+          setLoadedReadmeVersionId(latestVersionId);
         })
         .catch((error) => {
           if (cancelled) return;
           setReadmeError(error instanceof Error ? error.message : "Failed to load README");
           setReadme(null);
-          setLoadedReadmeVersionId(latestVersion._id);
+          setLoadedReadmeVersionId(latestVersionId);
         });
     }
 
     return () => {
       cancelled = true;
     };
-  }, [getReadme, latestVersion, loadedReadmeVersionId, readme, readmeError]);
+  }, [getReadme, latestVersionId, loadedReadmeVersionId, readme, readmeError]);
 
   useEffect(() => {
-    if (!tagVersionId && latestVersion) {
-      setTagVersionId(latestVersion._id);
+    if (!skill || !activeOptimisticStar) return;
+    if (skill.stats.stars !== activeOptimisticStar.baselineStars) {
+      setOptimisticStar(null);
     }
-  }, [latestVersion, tagVersionId]);
+  }, [activeOptimisticStar, skill]);
 
   const closeReportDialog = () => {
     setIsReportDialogOpen(false);
@@ -301,22 +458,22 @@ export function SkillDetailPage({
     setIsReportDialogOpen(true);
   };
 
-  const submitTag = () => {
+  const submitSummary = async (value: string) => {
     if (!skill) return;
-    if (!tagName.trim() || !tagVersionId) return;
-    void updateTags({
-      skillId: skill._id,
-      tags: [{ tag: tagName.trim(), versionId: tagVersionId }],
-    });
-  };
-
-  const deleteTag = (tag: string) => {
-    if (!skill) return;
-    if (!window.confirm(`Delete tag "${tag}"?`)) return;
-    void deleteTags({
-      skillId: skill._id,
-      tags: [tag],
-    });
+    const nextSummary = value.trim();
+    if (nextSummary === (skill.summary ?? "").trim()) {
+      return;
+    }
+    try {
+      await updateSummary({
+        skillId: skill._id,
+        summary: nextSummary,
+      });
+      toast.success("Summary updated.");
+    } catch (error) {
+      console.error("Failed to update summary", error);
+      toast.error(getUserFacingConvexError(error, "Failed to update summary."));
+    }
   };
 
   const submitReport = async () => {
@@ -345,21 +502,59 @@ export function SkillDetailPage({
     }
   };
 
-  const submitRescanRequest = async () => {
+  const submitPublisherNoteAndRescan = async (clawScanNote: string) => {
     if (!skill) return;
     try {
-      await requestRescan({ skillId: skill._id });
-      toast.success("Rescan requested.", {
-        action: {
-          label: "Dashboard",
-          onClick: () => {
-            window.location.href = "/dashboard";
-          },
-        },
+      await updatePublisherNoteAndRequestRescan({
+        skillId: skill._id,
+        clawScanNote,
       });
+      toast.success("Publisher note saved. Rescan started; this may take a few minutes.");
     } catch (error) {
-      toast.error(getUserFacingConvexError(error, "Could not request a rescan."));
+      toast.error(getUserFacingConvexError(error, "Could not save publisher note."));
+      throw error;
     }
+  };
+
+  const handleToggleStar = async () => {
+    if (!skill) return;
+    const activeStar = activeOptimisticStar;
+    const baselineStarred = activeStar?.baselineStarred ?? Boolean(effectiveIsStarred);
+    const previousIsStarred = Boolean(effectiveIsStarred);
+    const baselineStars = activeStar?.baselineStars ?? skill.stats.stars ?? 0;
+
+    try {
+      const starResult = (await toggleStar({ skillId: skill._id })) as { starred: boolean };
+      setOptimisticStar({
+        skillId: skill._id,
+        starred: starResult.starred,
+        baselineStarred,
+        baselineStars,
+        delta:
+          starResult.starred === previousIsStarred
+            ? (activeStar?.delta ?? 0)
+            : starResult.starred === baselineStarred
+              ? 0
+              : starResult.starred
+                ? 1
+                : -1,
+      });
+      void router.invalidate();
+    } catch (error) {
+      console.error("Failed to toggle star", error);
+      toast.error(getUserFacingConvexError(error, "Unable to update star. Please try again."));
+    }
+  };
+
+  const requireSignIn = () => {
+    clearAuthError();
+    const redirectTo =
+      typeof window === "undefined"
+        ? "/"
+        : `${window.location.pathname}${window.location.search}${window.location.hash}`;
+    void signIn("github", redirectTo ? { redirectTo } : undefined).catch((error) => {
+      setAuthError(getUserFacingAuthError(error, "Sign in failed. Please try again."));
+    });
   };
 
   if (isLoadingSkill || wantsCanonicalRedirect) {
@@ -372,7 +567,7 @@ export function SkillDetailPage({
     );
   }
 
-  if (result === null || !skill) {
+  if (result === null || !skill || !displayedSkill) {
     return (
       <main className="section detail-page-section">
         <Card>Skill not found.</Card>
@@ -380,16 +575,6 @@ export function SkillDetailPage({
     );
   }
 
-  const tagEntries = Object.entries(skill.tags ?? {}) as Array<[string, Id<"skillVersions">]>;
-  const latestTagVersionId = latestVersion?._id ?? skill.latestVersionId ?? null;
-  const currentTagEntries =
-    latestTagVersionId === null
-      ? tagEntries
-      : tagEntries.filter(([, versionId]) => versionId === latestTagVersionId);
-  const historicalTagEntries =
-    latestTagVersionId === null
-      ? []
-      : tagEntries.filter(([, versionId]) => versionId !== latestTagVersionId);
   const securitySummary = latestVersion ? (
     <DetailSecuritySummary
       scannerBasePath={`/${encodeURIComponent(
@@ -401,18 +586,73 @@ export function SkillDetailPage({
       staticScan={latestVersion.staticScan ?? null}
       suppressScanResults={suppressVersionScanResults}
       suppressedMessage={scanResultsSuppressedMessage}
-      rescanState={rescanState ?? null}
-      onRequestRescan={canViewOwnerRescanState ? submitRescanRequest : null}
     />
   ) : null;
-  const detailPath = `/${encodeURIComponent(ownerParam ?? ownerHandle ?? "unknown")}/${encodeURIComponent(skill.slug)}`;
-  const settingsHref = canManage ? `${detailPath}/settings` : null;
+  const priorityContent =
+    staffModerationNote || securitySummary ? (
+      <>
+        {staffModerationNote ? (
+          <Alert variant="warn" className="skill-visibility-alert" role="status">
+            <TriangleAlert size={18} aria-hidden="true" />
+            <AlertDescription>{staffModerationNote}</AlertDescription>
+          </Alert>
+        ) : null}
+        {securitySummary}
+      </>
+    ) : null;
+  const settingsPanel =
+    canAccessSettings && skill ? (
+      <SkillOwnershipPanel
+        skillId={skill._id}
+        slug={skill.slug}
+        ownerHandle={ownerHandle}
+        ownerId={owner?._id ?? null}
+        ownedSkills={(ownedSkills ?? []).filter((entry) => entry._id !== skill._id)}
+        summary={skill.summary ?? ""}
+        onSaveSummary={canAccessSettings ? submitSummary : null}
+        clawScanNote={latestVersion?.clawScanNote ?? null}
+        onSavePublisherNoteAndRescan={submitPublisherNoteAndRescan}
+      />
+    ) : null;
+
+  if (mode === "settings") {
+    const detailHref = buildSkillHref(ownerHandle, owner?._id ?? null, skill.slug);
+
+    return (
+      <main className="section detail-page-section">
+        <DetailPageShell className="skill-settings-page">
+          <div className="skill-settings-page-header">
+            <a href={detailHref} className="skill-settings-back-link">
+              <ArrowLeft size={16} aria-hidden="true" />
+              Back to {skill.displayName}
+            </a>
+            <div>
+              <h1 className="skill-settings-page-title">Skill settings</h1>
+            </div>
+          </div>
+          <DetailBody>
+            {settingsPanel ? (
+              settingsPanel
+            ) : (
+              <Card>
+                <h2 className="section-title text-[1.2rem] m-0">Settings unavailable</h2>
+                <p className="section-subtitle mt-3 mb-0">
+                  Only the skill owner, an owner org admin, or platform staff can manage these
+                  settings.
+                </p>
+              </Card>
+            )}
+          </DetailBody>
+        </DetailPageShell>
+      </main>
+    );
+  }
 
   return (
     <main className="section detail-page-section">
       <DetailPageShell>
         <SkillHeader
-          skill={skill}
+          skill={displayedSkill}
           owner={owner}
           ownerHandle={ownerHandle}
           latestVersion={latestVersion}
@@ -420,9 +660,10 @@ export function SkillDetailPage({
           canManage={canManage}
           isAuthenticated={isAuthenticated}
           isStaff={isStaff}
-          isStarred={isStarred}
-          onToggleStar={() => void toggleStar({ skillId: skill._id })}
+          isStarred={effectiveIsStarred}
+          onToggleStar={() => void handleToggleStar()}
           onOpenReport={openReportDialog}
+          onRequireSignIn={requireSignIn}
           forkOf={forkOf}
           forkOfLabel={forkOfLabel}
           forkOfHref={forkOfHref}
@@ -430,7 +671,6 @@ export function SkillDetailPage({
           canonical={canonical}
           canonicalHref={canonicalHref}
           canonicalOwnerHandle={canonicalOwnerHandle}
-          staffModerationNote={staffModerationNote}
           staffVisibilityTag={staffVisibilityTag}
           isAutoHidden={isAutoHidden}
           isRemoved={isRemoved}
@@ -439,181 +679,59 @@ export function SkillDetailPage({
           configRequirements={configRequirements}
           cliHelp={cliHelp}
           clawdis={clawdis}
-          osLabels={osLabels}
-          priorityContent={securitySummary}
+          priorityContent={priorityContent}
+          newVersionHref={newVersionHref}
           settingsHref={settingsHref}
         >
-          {mode === "detail" ? (
-            <>
-              {nixSnippet ? (
-                <Card>
-                  <h3 className="m-0 text-[length:var(--text-base)] font-semibold">
-                    Install via Nix
-                  </h3>
-                  <pre className="hero-install-code mt-2">{nixSnippet}</pre>
-                </Card>
-              ) : null}
+          {nixSnippet ? (
+            <Card>
+              <h3 className="m-0 text-[length:var(--text-base)] font-semibold">Install via Nix</h3>
+              <pre className="hero-install-code mt-2">{nixSnippet}</pre>
+            </Card>
+          ) : null}
 
-              {configExample ? (
-                <Card>
-                  <h3 className="m-0 text-[length:var(--text-base)] font-semibold">
-                    Config example
-                  </h3>
-                  <pre className="hero-install-code mt-2">{configExample}</pre>
-                </Card>
-              ) : null}
+          {configExample ? (
+            <Card>
+              <h3 className="m-0 text-[length:var(--text-base)] font-semibold">Config example</h3>
+              <pre className="hero-install-code mt-2">{configExample}</pre>
+            </Card>
+          ) : null}
 
-              <SkillDetailTabs
-                activeTab={activeTab}
-                setActiveTab={setActiveTab}
-                onCompareIntent={() => setShouldPrefetchCompare(true)}
-                readmeContent={readmeContent}
-                readmeError={readmeError}
-                latestFiles={latestFiles}
-                latestVersionId={latestVersion?._id ?? null}
-                skill={skill as Doc<"skills">}
-                diffVersions={diffVersions}
-                versions={versions}
-                nixPlugin={Boolean(nixPlugin)}
-                suppressVersionScanResults={suppressVersionScanResults}
-                scanResultsSuppressedMessage={scanResultsSuppressedMessage}
+          <SkillDetailTabs
+            activeTab={activeTab}
+            setActiveTab={setActiveTab}
+            onCompareIntent={() => setShouldPrefetchCompare(true)}
+            readmeContent={readmeContent}
+            readmeError={readmeError}
+            latestFiles={latestFiles}
+            latestVersionId={latestVersion?._id ?? null}
+            skill={skill as Doc<"skills">}
+            diffVersions={diffVersions}
+            versions={versions}
+            nixPlugin={Boolean(nixPlugin)}
+            suppressVersionScanResults={suppressVersionScanResults}
+            scanResultsSuppressedMessage={scanResultsSuppressedMessage}
+            clawdis={clawdis}
+            osLabels={osLabels}
+          />
+
+          {SHOW_SKILL_COMMENTS ? (
+            <ClientOnly
+              fallback={
+                <Card>
+                  <h2 className="section-title text-[1.2rem] m-0">Comments</h2>
+                  <p className="section-subtitle mt-3 mb-0">Loading comments...</p>
+                </Card>
+              }
+            >
+              <SkillCommentsPanel
+                skillId={skill._id}
+                isAuthenticated={isAuthenticated}
+                me={me ?? null}
               />
-
-              <Card className="skill-tag-card">
-                <CardHeader>
-                  <CardTitle>Version tags</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <div className="skill-tag-row">
-                    {currentTagEntries.length === 0 ? (
-                      <span className="section-subtitle m-0">No tags yet.</span>
-                    ) : (
-                      currentTagEntries.map(([tag, versionId]) => (
-                        <Badge key={tag}>
-                          {tag}
-                          <span className="tag-meta">
-                            v{versionById.get(versionId)?.version ?? versionId}
-                          </span>
-                          {canManage && tag !== "latest" ? (
-                            <button
-                              type="button"
-                              className="tag-delete"
-                              onClick={() => deleteTag(tag)}
-                              aria-label={`Delete tag ${tag}`}
-                              title={`Delete tag "${tag}"`}
-                            >
-                              x
-                            </button>
-                          ) : null}
-                        </Badge>
-                      ))
-                    )}
-                  </div>
-
-                  {canManage && historicalTagEntries.length > 0 ? (
-                    <div className="skill-tag-history">
-                      <div className="skill-tag-history-label">Historical tags</div>
-                      <div className="skill-tag-row">
-                        {historicalTagEntries.map(([tag, versionId]) => (
-                          <Badge key={tag}>
-                            {tag}
-                            <span className="tag-meta">
-                              v{versionById.get(versionId)?.version ?? versionId}
-                            </span>
-                            {tag !== "latest" ? (
-                              <button
-                                type="button"
-                                className="tag-delete"
-                                onClick={() => deleteTag(tag)}
-                                aria-label={`Delete tag ${tag}`}
-                                title={`Delete tag "${tag}"`}
-                              >
-                                x
-                              </button>
-                            ) : null}
-                          </Badge>
-                        ))}
-                      </div>
-                    </div>
-                  ) : null}
-
-                  {canManage ? (
-                    <form
-                      onSubmit={(event) => {
-                        event.preventDefault();
-                        submitTag();
-                      }}
-                      className="tag-form"
-                    >
-                      <input
-                        aria-label="Tag name"
-                        className="search-input"
-                        name="tagName"
-                        value={tagName}
-                        onChange={(event) => setTagName(event.target.value)}
-                        placeholder="latest..."
-                      />
-                      <select
-                        aria-label="Tag version"
-                        className="search-input"
-                        name="tagVersion"
-                        value={tagVersionId ?? ""}
-                        onChange={(event) =>
-                          setTagVersionId(event.target.value as Id<"skillVersions">)
-                        }
-                      >
-                        {(versions ?? []).map((version) => (
-                          <option key={version._id} value={version._id}>
-                            v{version.version}
-                          </option>
-                        ))}
-                      </select>
-                      <Button type="submit">Update Tag</Button>
-                    </form>
-                  ) : null}
-                </CardContent>
-              </Card>
-
-              {SHOW_SKILL_COMMENTS ? (
-                <ClientOnly
-                  fallback={
-                    <Card>
-                      <h2 className="section-title text-[1.2rem] m-0">Comments</h2>
-                      <p className="section-subtitle mt-3 mb-0">Loading comments...</p>
-                    </Card>
-                  }
-                >
-                  <SkillCommentsPanel
-                    skillId={skill._id}
-                    isAuthenticated={isAuthenticated}
-                    me={me ?? null}
-                  />
-                </ClientOnly>
-              ) : null}
-            </>
+            </ClientOnly>
           ) : null}
         </SkillHeader>
-
-        {mode === "settings" ? (
-          <DetailBody>
-            {isOwner && skill ? (
-              <SkillOwnershipPanel
-                skillId={skill._id}
-                slug={skill.slug}
-                ownerHandle={ownerHandle}
-                ownerId={owner?._id ?? null}
-                ownedSkills={(ownedSkills ?? []).filter((entry) => entry._id !== skill._id)}
-              />
-            ) : (
-              <Card>
-                <h2 className="section-title text-[1.2rem] m-0">Settings unavailable</h2>
-                <p className="section-subtitle mt-3 mb-0">
-                  Only the skill owner can manage these settings.
-                </p>
-              </Card>
-            )}
-          </DetailBody>
-        ) : null}
       </DetailPageShell>
 
       <SkillReportDialog

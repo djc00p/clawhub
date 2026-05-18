@@ -13,7 +13,9 @@ describe("skill detail install helpers", () => {
   const ownerPublisherId = "publishers:1" as Id<"publishers">;
 
   it("prefers the owner handle for install targets", () => {
-    expect(buildSkillInstallTarget("steipete", ownerPublisherId, "weather")).toBe("steipete/weather");
+    expect(buildSkillInstallTarget("steipete", ownerPublisherId, "weather")).toBe(
+      "steipete/weather",
+    );
   });
 
   it("falls back to owner id and then plain slug", () => {
@@ -23,11 +25,15 @@ describe("skill detail install helpers", () => {
 
   it("formats the OpenClaw and ClawHub commands", () => {
     expect(formatOpenClawInstallCommand("weather")).toBe("openclaw skills install weather");
-    expect(formatClawHubInstallCommand("weather", "npm")).toBe("npx clawhub@latest install weather");
+    expect(formatClawHubInstallCommand("weather", "npm")).toBe(
+      "npx clawhub@latest install weather",
+    );
     expect(formatClawHubInstallCommand("weather", "pnpm")).toBe(
       "pnpm dlx clawhub@latest install weather",
     );
-    expect(formatClawHubInstallCommand("weather", "bun")).toBe("bunx clawhub@latest install weather");
+    expect(formatClawHubInstallCommand("weather", "bun")).toBe(
+      "bunx clawhub@latest install weather",
+    );
   });
 
   it("builds the install-and-setup prompt from known metadata only", () => {
@@ -53,6 +59,12 @@ describe("skill detail install helpers", () => {
     expect(prompt).toContain("WEATHER_API_KEY");
     expect(prompt).toContain("curl");
     expect(prompt).toContain("~/.weatherrc");
+    expect(prompt.startsWith("Before installing anything")).toBe(true);
+    expect(prompt).toContain("verify its source, maintainer, and package contents");
+    expect(prompt).toContain(
+      'Install the skill "Weather" (steipete/weather) from ClawHub only after those checks pass.',
+    );
+    expect(prompt).toContain("After install, help me finish setup from verified skill metadata.");
     expect(prompt).not.toContain("unknown");
   });
 
@@ -67,7 +79,11 @@ describe("skill detail install helpers", () => {
       ownerId: null,
     });
 
-    expect(prompt).toContain('Install the skill "Weather" (weather) from ClawHub.');
+    expect(prompt.startsWith("Before installing anything")).toBe(true);
+    expect(prompt).toContain(
+      'Install the skill "Weather" (weather) from ClawHub only after those checks pass.',
+    );
+    expect(prompt).toContain("verify its source, maintainer, and package contents");
     expect(prompt).not.toContain("Skill page:");
     expect(prompt).not.toContain("unknown");
   });

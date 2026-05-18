@@ -6,17 +6,11 @@ import { FEATURE_SOULS } from "./features";
  */
 
 /** Lucide icon name used as a key to look up the component at render time. */
-export type NavIconName = "wrench" | "plug" | "ghost";
+type NavIconName = "wrench" | "plug" | "ghost";
 
-export interface NavItem {
+interface NavItemBase {
   /** Visible link text */
   label: string;
-  /** Route path passed to `<Link to>` */
-  to: string;
-  /** Optional search params object passed to `<Link search>` */
-  search?: Record<string, unknown>;
-  /** Optional lucide icon name shown beside the label in navbar tabs */
-  icon?: NavIconName;
   /** Link only shown when user is authenticated */
   authRequired: boolean;
   /** Link only shown for staff / moderator users */
@@ -31,6 +25,26 @@ export interface NavItem {
   featureFlag?: boolean;
 }
 
+interface RouteNavItem extends NavItemBase {
+  /** Route path passed to `<Link to>` */
+  to: string;
+  href?: never;
+  /** Optional search params object passed to `<Link search>` */
+  search?: Record<string, unknown>;
+  /** Optional lucide icon name shown beside the label in navbar tabs */
+  icon?: NavIconName;
+}
+
+interface ExternalNavItem extends NavItemBase {
+  /** External URL rendered as a normal anchor */
+  href: string;
+  to?: never;
+  search?: never;
+  icon?: never;
+}
+
+type NavItem = RouteNavItem | ExternalNavItem;
+
 // ---------------------------------------------------------------------------
 // Search-param shapes (kept here so Header, Footer, and mobile menu all agree)
 // ---------------------------------------------------------------------------
@@ -40,7 +54,6 @@ const SKILLS_SEARCH = {
   sort: undefined,
   dir: undefined,
   highlighted: undefined,
-  nonSuspicious: undefined,
   view: undefined,
   focus: undefined,
 } as const;
@@ -53,7 +66,7 @@ const SOULS_SEARCH = {
   focus: undefined,
 } as const;
 
-const USERS_SEARCH = { q: undefined } as const;
+const PUBLISHERS_SEARCH = { q: undefined } as const;
 
 // ---------------------------------------------------------------------------
 // Primary nav items (desktop tabs row + mobile dropdown top section)
@@ -104,17 +117,17 @@ export const PRIMARY_NAV_ITEMS: NavItem[] = [
 
 export const SECONDARY_NAV_ITEMS: NavItem[] = [
   {
-    label: "Users",
-    to: "/users",
-    search: USERS_SEARCH,
+    label: "Publishers",
+    to: "/publishers",
+    search: PUBLISHERS_SEARCH,
     authRequired: false,
     staffOnly: false,
     soulModeOnly: false,
     soulModeHide: true,
   },
   {
-    label: "About",
-    to: "/about",
+    label: "Docs",
+    href: "https://documentation.openclaw.ai/clawhub/",
     authRequired: false,
     staffOnly: false,
     soulModeOnly: false,
@@ -126,12 +139,12 @@ export const SECONDARY_NAV_ITEMS: NavItem[] = [
 // Footer sections
 // ---------------------------------------------------------------------------
 
-export interface FooterNavSection {
+interface FooterNavSection {
   title: string;
   items: FooterNavItem[];
 }
 
-export type FooterNavItem =
+type FooterNavItem =
   | {
       kind: "link";
       label: string;
@@ -148,6 +161,7 @@ export const FOOTER_NAV_SECTIONS: FooterNavSection[] = [
     items: [
       { kind: "link", label: "Skills", to: "/skills", search: SKILLS_SEARCH },
       { kind: "link", label: "Plugins", to: "/plugins" },
+      { kind: "link", label: "Audits", to: "/audits", search: { type: undefined } },
       {
         kind: "link",
         label: "Souls",
@@ -163,13 +177,13 @@ export const FOOTER_NAV_SECTIONS: FooterNavSection[] = [
       {
         kind: "link",
         label: "Publish Skill",
-        to: "/publish-skill",
+        to: "/skills/publish",
         search: { updateSlug: undefined },
       },
       {
         kind: "link",
         label: "Publish Plugin",
-        to: "/publish-plugin",
+        to: "/plugins/publish",
         search: {
           ownerHandle: undefined,
           name: undefined,

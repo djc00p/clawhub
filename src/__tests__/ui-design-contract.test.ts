@@ -80,13 +80,14 @@ describe("restored UI design contract", () => {
     expect(headerSource).toContain('className="github-sign-in-button"');
     expect(headerSource).toContain('className="sign-in-full-copy"');
     expect(headerSource).toContain('className="sign-in-compact-copy"');
-    expect(headerSource).toContain("Search skills, plugins, users");
+    expect(headerSource).toContain("Search skills and plugins");
     expect(headerSource).toContain('className="navbar-tabs-primary"');
     expect(headerSource).toContain('className="navbar-tabs-secondary"');
 
     expect(navSource).toContain("export const SECONDARY_NAV_ITEMS");
-    expect(navSource).toContain('label: "Users"');
-    expect(navSource).toContain('label: "About"');
+    expect(navSource).toContain('label: "Publishers"');
+    expect(navSource).toContain('label: "Docs"');
+    expect(navSource).not.toContain('label: "About"');
     expect(navSource).not.toContain('label: "Stars"');
     expect(navSource).not.toContain('label: "Management"');
 
@@ -95,18 +96,18 @@ describe("restored UI design contract", () => {
     expect(headerShell).toContain("padding: 0 var(--space-5)");
 
     const themeControl = cssRule(css, ".theme-mode-toggle");
-    expect(themeControl).toContain("min-width: 154px");
-    expect(themeControl).toContain("min-height: 50px");
+    expect(themeControl).toContain("min-width: 124px");
+    expect(themeControl).toContain("min-height: 32px");
     expect(themeControl).toContain("border: 1px solid var(--line)");
+    expect(css).toContain("--r-btn: var(--r-sm)");
 
     const compact = cssMediaContaining(css, "(max-width: 760px)", [
-      "grid-template-columns: 56px minmax(0, 1fr) 56px",
+      "grid-template-columns: 40px minmax(0, 1fr) 40px",
       ".navbar-search {\n    display: flex;",
-      ".navbar-tabs {\n    display: flex;",
-      ".navbar-tabs-secondary {\n    display: inline-flex;",
+      ".navbar-tabs {\n    display: none;",
+      ".nav-mobile {\n    display: inline-flex;",
     ]);
     expect(compact).not.toContain(".navbar-search {\n    display: none;");
-    expect(compact).not.toContain(".navbar-tabs {\n    display: none;");
   });
 
   it("requires the restored home hero, carousel, category grid, and Trending Now sections", () => {
@@ -224,7 +225,7 @@ describe("restored UI design contract", () => {
 
     expect(shellSource).toContain('"skill-hero-layout has-sidebar"');
     expect(cssRule(css, ".skill-hero-layout")).toContain("grid-template-columns: minmax(0, 1fr)");
-    expect(cssRule(css, ".skill-hero-layout.has-sidebar")).toContain(
+    expect(cssRule(css, ".skill-hero-lower.has-sidebar")).toContain(
       "grid-template-columns: minmax(0, 1fr) minmax(300px, 360px)",
     );
     expect(cssRule(css, ".skill-hero-action-grid")).toContain(
